@@ -1,0 +1,25 @@
+ASPECT GLASSWORK — STOREFRONT ESTIMATOR V1 — WINDOWS / VS CODE
+
+1. Install Node.js LTS from https://nodejs.org/en/download
+2. Extract the ZIP and open the folder that directly contains package.json in VS Code.
+3. In VS Code: Terminal > New Terminal. On Windows, use Command Prompt.
+4. Run these commands one at a time:
+
+   node -v
+   npm -v
+   npm install
+   npm test
+   npm run dev
+
+5. Open http://localhost:3000 in Chrome or Edge.
+6. Edit the sample opening and update Pricing & rates with VERIFIED supplier values.
+7. Back up data by clicking Backup (JSON). Print customer quote > Save as PDF.
+8. Stop the local website with Ctrl + C.
+9. To verify full build, run: npm run typecheck, then npm run build.
+10. Publish to a private GitHub repository later; connect Vercel when you're ready.
+
+README.md contains a much more detailed step-by-step guide.
+FULL_SOURCE_CODE.md contains every application source file in copyable form.
+
+DO NOT USE SAMPLE PRICING AS ACTUAL ASPECT OR SUPPLIER PRICING.
+NO EMPLOYEE LOGIN OR SHARED DATABASE IS INCLUDED IN V1.
