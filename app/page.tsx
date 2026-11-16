@@ -18,14 +18,385 @@ import {
 import { GLASS_TYPES } from '../lib/types';
 import type {
   EstimateProject,
+  EstimateTotals,
+  OpeningCalculation,
   PricingRules,
   StorefrontOpening,
 } from '../lib/types';
 
+// Display four decimals for quantities.
+// The calculation engine keeps full precision.
+const num = (n: number) => decimal(n, 4);
+const percent = (n: number) => decimal(n, 2);
+
+type Row = [
+  label: string,
+  formula: string,
+  result: string
+];
+
+// EXPANDABLE COMPUTATION DROPDOWN
+function CalculationDropdown({
+  title,
+  rows,
+  note,
+}: {
+  title: string;
+  rows: Row[];
+  note: string;
+}) {
+  return (
+    <details
+      style={{
+        margin: '14px 0',
+        border: '1px solid #cbded6',
+        borderRadius: 10,
+        background: '#f7fbf9',
+        color: '#20384a',
+        overflow: 'hidden',
+      }}
+    >
+      <summary
+        style={{
+          padding: '13px 15px',
+          cursor: 'pointer',
+          color: '#166e56',
+          fontSize: 12,
+          fontWeight: 700,
+        }}
+      >
+        {title}
+      </summary>
+
+      <div style={{ padding: '0 15px 14px' }}>
+        {rows.map(([label, formula, result], i) => (
+          <div
+            key={i}
+            style={{
+              display: 'grid',
+              gridTemplateColumns: 'minmax(0,1fr) auto',
+              gap: 14,
+              padding: '12px 0',
+              borderBottom: '1px solid #dce7e2',
+            }}
+          >
+            <div style={{ minWidth: 0 }}>
+              <strong
+                style={{
+                  display: 'block',
+                  fontSize: 12,
+                }}
+              >
+                {label}
+              </strong>
+
+              <div
+                style={{
+                  color: '#607787',
+                  fontSize: 11,
+                  lineHeight: 1.6,
+                  fontFamily: 'Consolas, monospace',
+                  overflowWrap: 'anywhere',
+                  marginTop: 4,
+                }}
+              >
+                {formula}
+              </div>
+            </div>
+
+            <strong
+              style={{
+                fontSize: 12,
+                color: '#117958',
+                whiteSpace: 'nowrap',
+                textAlign: 'right',
+                fontVariantNumeric: 'tabular-nums',
+              }}
+            >
+              {result}
+            </strong>
+          </div>
+        ))}
+
+        <p
+          style={{
+            fontSize: 11,
+            lineHeight: 1.6,
+            color: '#687c88',
+          }}
+        >
+          {note}
+        </p>
+      </div>
+    </details>
+  );
+}
+
+// COMPUTATION FOR EACH STOREFRONT OPENING
+function OpeningCalculationBreakdown({
+  line,
+  pricing,
+}: {
+  line: OpeningCalculation;
+  pricing: PricingRules;
+}) {
+  const o = line.opening;
+  const w = line.widthInches;
+  const h = line.heightInches;
+  const q = o.quantity;
+
+  const glassRate =
+    o.glassRateOverride ??
+    pricing.glassRates[o.glassType];
+
+  const frameRate =
+    o.frameRateOverride ??
+    pricing.framingRatePerLF;
+
+  const doorRate =
+    o.openingType === 'single-door'
+      ? pricing.singleDoorPackage
+      : o.openingType === 'double-door'
+        ? pricing.doubleDoorPackage
+        : 0;
+
+  const rows: Row[] = [
+    [
+      'Gross opening area (SF)',
+      `(${num(w)} in × ${num(h)} in ÷ 144) × ${q}`,
+      `${num(line.grossSF)} SF`,
+    ],
+    [
+      'Glass area with allowance',
+      `${num(line.grossSF)} SF × (1 + ${percent(
+        pricing.glassWastePct
+      )} ÷ 100)`,
+      `${num(line.purchasableGlassSF)} SF`,
+    ],
+    [
+      'Net framing length (LF)',
+      `([2 × (${num(w)} + ${num(h)})] + ` +
+        `[(${o.columns} − 1) × ${num(h)}] + ` +
+        `[(${o.rows} − 1) × ${num(w)}]) ÷ 12 × ${q}`,
+      `${num(line.netFrameLF)} LF`,
+    ],
+    [
+      'Framing length with allowance',
+      `${num(line.netFrameLF)} LF × (1 + ${percent(
+        pricing.frameWastePct
+      )} ÷ 100)`,
+      `${num(line.purchasableFrameLF)} LF`,
+    ],
+    [
+      'Glass cost',
+      `${num(line.purchasableGlassSF)} SF × ` +
+        `${currency(glassRate)}/SF` +
+        (o.glassRateOverride !== null
+          ? ' (custom rate)'
+          : ''),
+      currency(line.glassCost),
+    ],
+    [
+      'Framing cost',
+      `${num(line.purchasableFrameLF)} LF × ` +
+        `${currency(frameRate)}/LF` +
+        (o.frameRateOverride !== null
+          ? ' (custom rate)'
+          : ''),
+      currency(line.frameCost),
+    ],
+    [
+      'Door package',
+      `${q} × ${currency(doorRate)} per assembly ` +
+        `(${o.openingType})`,
+      currency(line.doorPackageCost),
+    ],
+    [
+      'Additional hardware',
+      `${q} × ${currency(
+        o.hardwareAllowance
+      )} per assembly`,
+      currency(line.hardwareAllowanceCost),
+    ],
+    [
+      'Installation labor',
+      `${q} × ${num(
+        o.laborHoursPerAssembly
+      )} hours × ${currency(
+        pricing.laborRatePerHour
+      )}/hour`,
+      currency(line.laborCost),
+    ],
+    [
+      'Estimated line cost',
+      `${currency(line.glassCost)} + ` +
+        `${currency(line.frameCost)} + ` +
+        `${currency(line.doorPackageCost)} + ` +
+        `${currency(line.hardwareAllowanceCost)} + ` +
+        `${currency(line.laborCost)}`,
+      currency(line.total),
+    ],
+  ];
+
+  return (
+    <CalculationDropdown
+      title={`▸ Show computation — ${
+        o.mark || 'Opening'
+      }`}
+      rows={rows}
+      note="Opening area and simplified framing lengths are budgeting estimates, not glass cut sizes or fabrication quantities. Intermediate values are rounded for display only."
+    />
+  );
+}
+
+// COMPUTATION FOR THE ENTIRE PROJECT
+function ProjectCalculationBreakdown({
+  totals,
+  pricing,
+}: {
+  totals: EstimateTotals;
+  pricing: PricingRules;
+}) {
+  const feeTotal =
+    pricing.targetMarginPct +
+    pricing.salesCommissionPct +
+    pricing.paymentProcessingPct;
+
+  const denominator = 1 - feeTotal / 100;
+
+  const contingencyBase =
+    pricing.contingencyBasis === 'glass'
+      ? totals.glassCost
+      : totals.directCost;
+
+  const rows: Row[] = [
+    [
+      'Gross glass area',
+      'Sum of gross opening areas for all marks',
+      `${num(totals.totalGlassSF)} SF`,
+    ],
+    [
+      'Net framing length',
+      'Sum of net framing lengths for all marks',
+      `${num(totals.totalFrameLF)} LF`,
+    ],
+    [
+      'Glass + frame cost',
+      `${currency(totals.glassCost)} + ` +
+        `${currency(totals.frameCost)}`,
+      currency(
+        totals.glassCost + totals.frameCost
+      ),
+    ],
+    [
+      'Direct project cost',
+      `${currency(totals.glassCost)} glass + ` +
+        `${currency(totals.frameCost)} frame + ` +
+        `${currency(totals.doorPackageCost)} door + ` +
+        `${currency(totals.additionalHardwareCost)} hardware + ` +
+        `${currency(totals.laborCost)} labor + ` +
+        `${currency(totals.freight)} freight + ` +
+        `${currency(totals.equipment)} equipment + ` +
+        `${currency(totals.miscellaneous)} misc. + ` +
+        `${currency(totals.overhead)} overhead`,
+      currency(totals.directCost),
+    ],
+    [
+      'Contingency',
+      `${currency(contingencyBase)} ` +
+        `(${
+          pricing.contingencyBasis === 'glass'
+            ? 'glass cost'
+            : 'direct project cost'
+        }) × ${percent(pricing.contingencyPct)}%`,
+      currency(totals.contingency),
+    ],
+    [
+      'Total estimated cost',
+      `${currency(totals.directCost)} direct cost + ` +
+        `${currency(totals.contingency)} contingency`,
+      currency(totals.totalCost),
+    ],
+    [
+      'Selling-price divisor',
+      `1 − (${percent(
+        pricing.targetMarginPct
+      )}% target margin + ` +
+        `${percent(
+          pricing.salesCommissionPct
+        )}% commission + ` +
+        `${percent(
+          pricing.paymentProcessingPct
+        )}% processing) ÷ 100`,
+      num(denominator),
+    ],
+    [
+      'Internal estimated selling price',
+      `${currency(totals.totalCost)} ÷ ` +
+        `${num(denominator)}`,
+      denominator > 0
+        ? currency(totals.sellingPrice)
+        : 'Invalid rates',
+    ],
+    [
+      'Sales commission',
+      `${currency(totals.sellingPrice)} × ` +
+        `${percent(
+          pricing.salesCommissionPct
+        )}%`,
+      currency(totals.commissionFee),
+    ],
+    [
+      'Payment-processing fees',
+      `${currency(totals.sellingPrice)} × ` +
+        `${percent(
+          pricing.paymentProcessingPct
+        )}%`,
+      currency(totals.paymentFee),
+    ],
+    [
+      'Projected profit',
+      `${currency(totals.sellingPrice)} selling price − ` +
+        `${currency(totals.totalCost)} total cost − ` +
+        `${currency(totals.commissionFee)} commission − ` +
+        `${currency(totals.paymentFee)} processing`,
+      denominator > 0
+        ? currency(totals.projectedProfit)
+        : 'Invalid rates',
+    ],
+    [
+      'Projected margin',
+      `${currency(totals.projectedProfit)} ÷ ` +
+        `${currency(totals.sellingPrice)} × 100`,
+      denominator > 0
+        ? `${percent(
+            totals.projectedMarginPct
+          )}%`
+        : 'Invalid rates',
+    ],
+  ];
+
+  const note =
+    (totals.errors.length
+      ? 'Some inputs are invalid; correct them before relying on these results. '
+      : '') +
+    'Values update automatically. Figures are rounded for display; the existing pricing engine retains full precision.';
+
+  return (
+    <CalculationDropdown
+      title="▸ Show complete project computation"
+      rows={rows}
+      note={note}
+    />
+  );
+}
+
 type Tab = 'estimate' | 'pricing';
 
-const STORAGE_KEY = 'aspect-storefront-estimator-v1';
+const STORAGE_KEY =
+  'aspect-storefront-estimator-v1';
 
+// FILE DOWNLOAD FUNCTION
 function downloadFile(
   filename: string,
   content: string,
@@ -34,13 +405,20 @@ function downloadFile(
   const url = URL.createObjectURL(
     new Blob([content], { type: mime })
   );
+
   const anchor = document.createElement('a');
+
   anchor.href = url;
   anchor.download = filename;
+
   document.body.appendChild(anchor);
   anchor.click();
   anchor.remove();
-  window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+
+  window.setTimeout(
+    () => URL.revokeObjectURL(url),
+    1000
+  );
 }
 
 function safeFilename(input: string): string {
@@ -55,8 +433,6 @@ function safeFilename(input: string): string {
 function csvValue(value: string | number): string {
   let str = String(value);
 
-  // Prevent spreadsheet applications from interpreting
-  // imported text as a formula.
   if (/^[\s]*[=+\-@]/.test(str)) {
     str = `'${str}`;
   }
@@ -64,6 +440,7 @@ function csvValue(value: string | number): string {
   return `"${str.replace(/"/g, '""')}"`;
 }
 
+// REUSABLE INPUT COMPONENTS
 function Field({
   label,
   children,
@@ -75,10 +452,16 @@ function Field({
 }) {
   return (
     <label className="field">
-      <span className="field-label">{label}</span>
+      <span className="field-label">
+        {label}
+      </span>
+
       {children}
+
       {hint && (
-        <span className="field-hint">{hint}</span>
+        <span className="field-hint">
+          {hint}
+        </span>
       )}
     </label>
   );
@@ -101,7 +484,9 @@ function TextInput({
       type={type}
       value={value}
       placeholder={placeholder}
-      onChange={(e) => onChange(e.target.value)}
+      onChange={(e) =>
+        onChange(e.target.value)
+      }
     />
   );
 }
@@ -126,7 +511,11 @@ function NumberInput({
       min={min}
       max={max}
       step={step}
-      value={Number.isFinite(value) ? value : ''}
+      value={
+        Number.isFinite(value)
+          ? value
+          : ''
+      }
       onChange={(e) =>
         onChange(
           e.target.value === ''
@@ -150,31 +539,48 @@ function Stat({
   hero?: boolean;
 }) {
   return (
-    <div className={`stat ${hero ? 'stat-hero' : ''}`}>
-      <span className="stat-title">{title}</span>
-      <strong className="stat-value">{value}</strong>
+    <div
+      className={`stat ${
+        hero ? 'stat-hero' : ''
+      }`}
+    >
+      <span className="stat-title">
+        {title}
+      </span>
+
+      <strong className="stat-value">
+        {value}
+      </strong>
+
       {help && (
-        <span className="stat-help">{help}</span>
+        <span className="stat-help">
+          {help}
+        </span>
       )}
     </div>
   );
 }
 
+// MAIN APPLICATION
 export default function Home() {
   const [project, setProject] =
-    useState<EstimateProject>(() => newProject());
+    useState<EstimateProject>(
+      () => newProject()
+    );
 
   const [loaded, setLoaded] = useState(false);
   const [tab, setTab] = useState<Tab>('estimate');
   const [savedAt, setSavedAt] = useState('');
   const [alertText, setAlertText] = useState('');
 
-  const importRef = useRef<HTMLInputElement>(null);
+  const importRef =
+    useRef<HTMLInputElement>(null);
 
-  // Load saved browser estimate.
+  // LOAD SAVED PROJECT
   useEffect(() => {
     try {
-      const existing = localStorage.getItem(STORAGE_KEY);
+      const existing =
+        localStorage.getItem(STORAGE_KEY);
 
       if (existing) {
         const parsed = normalizeProject(
@@ -192,7 +598,7 @@ export default function Home() {
     setLoaded(true);
   }, []);
 
-  // Automatically save project changes.
+  // AUTOSAVE PROJECT
   useEffect(() => {
     if (!loaded) return;
 
@@ -203,17 +609,22 @@ export default function Home() {
       );
 
       setSavedAt(
-        new Date().toLocaleTimeString([], {
-          hour: 'numeric',
-          minute: '2-digit',
-        })
+        new Date().toLocaleTimeString(
+          [],
+          {
+            hour: 'numeric',
+            minute: '2-digit',
+          }
+        )
       );
     } catch {
-      setSavedAt('Storage unavailable — export a backup');
+      setSavedAt(
+        'Storage unavailable — export a backup'
+      );
     }
   }, [project, loaded]);
 
-  // Calculate the current estimate.
+  // CALCULATE ESTIMATE
   const totals = useMemo(
     () => calculateEstimate(project),
     [project]
@@ -222,7 +633,9 @@ export default function Home() {
   const valid = totals.errors.length === 0;
   const p = project.pricing;
 
-  function updateProject<K extends keyof EstimateProject>(
+  function updateProject<
+    K extends keyof EstimateProject
+  >(
     key: K,
     value: EstimateProject[K]
   ) {
@@ -232,7 +645,9 @@ export default function Home() {
     }));
   }
 
-  function updatePricing<K extends keyof PricingRules>(
+  function updatePricing<
+    K extends keyof PricingRules
+  >(
     key: K,
     value: PricingRules[K]
   ) {
@@ -251,10 +666,11 @@ export default function Home() {
   ) {
     setProject((old) => ({
       ...old,
-      openings: old.openings.map((opening) =>
-        opening.id === id
-          ? { ...opening, ...patch }
-          : opening
+      openings: old.openings.map(
+        (opening) =>
+          opening.id === id
+            ? { ...opening, ...patch }
+            : opening
       ),
     }));
   }
@@ -268,7 +684,9 @@ export default function Home() {
       let index = old.openings.length + 1;
 
       while (
-        marks.has(`SF-${String(index).padStart(2, '0')}`)
+        marks.has(
+          `SF-${String(index).padStart(2, '0')}`
+        )
       ) {
         index += 1;
       }
@@ -317,9 +735,12 @@ export default function Home() {
     );
   }
 
+  // EXPORT JSON BACKUP
   function exportJSON() {
     downloadFile(
-      `${safeFilename(project.estimateNumber)}.json`,
+      `${safeFilename(
+        project.estimateNumber
+      )}.json`,
       JSON.stringify(project, null, 2),
       'application/json'
     );
@@ -329,6 +750,7 @@ export default function Home() {
     );
   }
 
+  // EXPORT TAKEOFF CSV
   function exportCSV() {
     const header = [
       'Mark',
@@ -349,36 +771,45 @@ export default function Home() {
       'Line cost',
     ];
 
-    const rows = totals.lines.map((l) => [
-      l.opening.mark,
-      formatOpeningType(l.opening.openingType),
-      l.opening.quantity,
-      l.widthInches,
-      l.heightInches,
-      l.opening.glassType,
-      l.opening.columns,
-      l.opening.rows,
-      l.grossSF.toFixed(3),
-      l.netFrameLF.toFixed(3),
-      l.glassCost.toFixed(2),
-      l.frameCost.toFixed(2),
-      l.doorPackageCost.toFixed(2),
-      l.hardwareAllowanceCost.toFixed(2),
-      l.laborCost.toFixed(2),
-      l.total.toFixed(2),
-    ]);
+    const rows = totals.lines.map(
+      (l) => [
+        l.opening.mark,
+        formatOpeningType(
+          l.opening.openingType
+        ),
+        l.opening.quantity,
+        l.widthInches,
+        l.heightInches,
+        l.opening.glassType,
+        l.opening.columns,
+        l.opening.rows,
+        l.grossSF.toFixed(3),
+        l.netFrameLF.toFixed(3),
+        l.glassCost.toFixed(2),
+        l.frameCost.toFixed(2),
+        l.doorPackageCost.toFixed(2),
+        l.hardwareAllowanceCost.toFixed(2),
+        l.laborCost.toFixed(2),
+        l.total.toFixed(2),
+      ]
+    );
 
     const csv = [header, ...rows]
-      .map((r) => r.map(csvValue).join(','))
+      .map((r) =>
+        r.map(csvValue).join(',')
+      )
       .join('\r\n');
 
     downloadFile(
-      `${safeFilename(project.estimateNumber)}-takeoff.csv`,
+      `${safeFilename(
+        project.estimateNumber
+      )}-takeoff.csv`,
       `\uFEFF${csv}`,
       'text/csv;charset=utf-8'
     );
   }
 
+  // IMPORT PROJECT
   async function importJSON(file?: File) {
     if (!file) return;
 
@@ -390,11 +821,17 @@ export default function Home() {
     }
 
     try {
-      const data = JSON.parse(await file.text());
-      const loadedProject = normalizeProject(data);
+      const data = JSON.parse(
+        await file.text()
+      );
+
+      const loadedProject =
+        normalizeProject(data);
 
       if (!loadedProject) {
-        setAlertText('Invalid project backup.');
+        setAlertText(
+          'Invalid project backup.'
+        );
         return;
       }
 
@@ -413,7 +850,9 @@ export default function Home() {
         'Project backup imported successfully. Check all costs and dimensions.'
       );
     } catch {
-      setAlertText('Could not open the JSON file.');
+      setAlertText(
+        'Could not open the JSON file.'
+      );
     } finally {
       if (importRef.current) {
         importRef.current.value = '';
@@ -423,7 +862,7 @@ export default function Home() {
 
   return (
     <div className="app-root">
-      {/* TOP BAR */}
+      {/* HEADER */}
       <header className="topbar">
         <div className="brand">
           <span className="brand-mark">
@@ -431,15 +870,19 @@ export default function Home() {
           </span>
 
           <span className="brand-names">
-            <strong>ASPECT GLASSWORK</strong>
-            <small>ESTIMATING STUDIO</small>
+            <strong>
+              ASPECT GLASSWORK
+            </strong>
+            <small>
+              ESTIMATING STUDIO
+            </small>
           </span>
         </div>
 
         <div className="topbar-right">
           <span className="top-pill">
             <span className="green-dot" />
-            Browser-based · V1.1
+            Browser-based · V1.2
           </span>
 
           <span className="autosave">
@@ -455,34 +898,50 @@ export default function Home() {
       <div className="shell">
         {/* SIDEBAR */}
         <aside className="sidebar">
-          <p className="sidebar-label">WORKSPACE</p>
+          <p className="sidebar-label">
+            WORKSPACE
+          </p>
 
           <button
             className={`navitem ${
-              tab === 'estimate' ? 'active' : ''
+              tab === 'estimate'
+                ? 'active'
+                : ''
             }`}
-            onClick={() => setTab('estimate')}
+            onClick={() =>
+              setTab('estimate')
+            }
           >
-            <span>▦</span> Storefront estimate
+            <span>▦</span>
+            Storefront estimate
           </button>
 
           <button
             className={`navitem ${
-              tab === 'pricing' ? 'active' : ''
+              tab === 'pricing'
+                ? 'active'
+                : ''
             }`}
-            onClick={() => setTab('pricing')}
+            onClick={() =>
+              setTab('pricing')
+            }
           >
-            <span>◫</span> Pricing & rates
+            <span>◫</span>
+            Pricing & rates
           </button>
 
           <div className="sidebar-spacer" />
 
           <div className="sidebar-help">
-            <strong>Estimator V1.1</strong>
+            <strong>
+              Estimator V1.2
+            </strong>
+
             <p>
-              Estimates are stored in this browser,
-              not a shared database. Export a backup
-              before changing computers.
+              Estimates are stored in this
+              browser, not a shared database.
+              Export a backup before changing
+              computers.
             </p>
           </div>
 
@@ -496,12 +955,13 @@ export default function Home() {
           </a>
         </aside>
 
-        {/* MAIN APPLICATION */}
+        {/* MAIN CONTENT */}
         <main className="main">
           <div className="page-toolbar">
             <div>
               <div className="eyebrow">
-                COMMERCIAL GLAZING / STOREFRONTS
+                COMMERCIAL GLAZING /
+                STOREFRONTS
               </div>
 
               <h1>
@@ -524,13 +984,17 @@ export default function Home() {
                 accept=".json,application/json"
                 hidden
                 onChange={(e) =>
-                  void importJSON(e.target.files?.[0])
+                  void importJSON(
+                    e.target.files?.[0]
+                  )
                 }
               />
 
               <button
                 className="btn btn-quiet"
-                onClick={() => importRef.current?.click()}
+                onClick={() =>
+                  importRef.current?.click()
+                }
               >
                 ↑ Import
               </button>
@@ -551,14 +1015,19 @@ export default function Home() {
             </div>
           </div>
 
-          {/* NOTIFICATIONS */}
+          {/* NOTIFICATION */}
           {alertText && (
-            <div className="toast" role="status">
+            <div
+              className="toast"
+              role="status"
+            >
               {alertText}
 
               <button
                 aria-label="Dismiss message"
-                onClick={() => setAlertText('')}
+                onClick={() =>
+                  setAlertText('')
+                }
               >
                 ×
               </button>
@@ -576,27 +1045,37 @@ export default function Home() {
               <button
                 key={key}
                 className={
-                  tab === key ? 'selected' : ''
+                  tab === key
+                    ? 'selected'
+                    : ''
                 }
-                onClick={() => setTab(key)}
+                onClick={() =>
+                  setTab(key)
+                }
               >
                 {name}
               </button>
             ))}
           </div>
 
-          {/* SAMPLE PRICING DISCLAIMER */}
+          {/* SAMPLE PRICING NOTICE */}
           <div className="sample-notice">
-            <strong>Sample pricing only</strong> —
-            Replace all example rates with verified
-            supplier quotes and Aspect-approved labor
-            assumptions before using any result for
-            business decisions.
+            <strong>
+              Sample pricing only
+            </strong>
+            {' '}— Replace all example rates
+            with verified supplier quotes and
+            Aspect-approved labor assumptions
+            before using any result for business
+            decisions.
           </div>
 
-          {/* INPUT ERRORS */}
+          {/* VALIDATION */}
           {totals.errors.length > 0 && (
-            <div className="validation" role="alert">
+            <div
+              className="validation"
+              role="alert"
+            >
               <strong>
                 Review estimate inputs (
                 {totals.errors.length})
@@ -605,16 +1084,16 @@ export default function Home() {
               <ul>
                 {totals.errors
                   .slice(0, 10)
-                  .map((error, index) => (
-                    <li key={`${index}-${error}`}>
-                      {error}
+                  .map((e, i) => (
+                    <li key={`${i}-${e}`}>
+                      {e}
                     </li>
                   ))}
               </ul>
             </div>
           )}
 
-          {/* STOREFRONT ESTIMATE */}
+          {/* STOREFRONT ESTIMATE PAGE */}
           {tab === 'estimate' && (
             <div className="workspace-columns">
               <div className="content-column">
@@ -625,8 +1104,12 @@ export default function Home() {
                       <span className="section-label">
                         01 / PROJECT DETAILS
                       </span>
-                      <h2>Project information</h2>
+
+                      <h2>
+                        Project information
+                      </h2>
                     </div>
+
                     <span className="tag">
                       Draft estimate
                     </span>
@@ -635,9 +1118,14 @@ export default function Home() {
                   <div className="form-grid">
                     <Field label="Project name">
                       <TextInput
-                        value={project.projectName}
+                        value={
+                          project.projectName
+                        }
                         onChange={(v) =>
-                          updateProject('projectName', v)
+                          updateProject(
+                            'projectName',
+                            v
+                          )
                         }
                         placeholder="e.g. 573 Route 17M"
                       />
@@ -645,18 +1133,28 @@ export default function Home() {
 
                     <Field label="Estimate number">
                       <TextInput
-                        value={project.estimateNumber}
+                        value={
+                          project.estimateNumber
+                        }
                         onChange={(v) =>
-                          updateProject('estimateNumber', v)
+                          updateProject(
+                            'estimateNumber',
+                            v
+                          )
                         }
                       />
                     </Field>
 
                     <Field label="Client / contractor">
                       <TextInput
-                        value={project.clientName}
+                        value={
+                          project.clientName
+                        }
                         onChange={(v) =>
-                          updateProject('clientName', v)
+                          updateProject(
+                            'clientName',
+                            v
+                          )
                         }
                         placeholder="Client name"
                       />
@@ -664,9 +1162,14 @@ export default function Home() {
 
                     <Field label="Project address">
                       <TextInput
-                        value={project.location}
+                        value={
+                          project.location
+                        }
                         onChange={(v) =>
-                          updateProject('location', v)
+                          updateProject(
+                            'location',
+                            v
+                          )
                         }
                         placeholder="City, state"
                       />
@@ -674,9 +1177,14 @@ export default function Home() {
 
                     <Field label="Estimator">
                       <TextInput
-                        value={project.estimator}
+                        value={
+                          project.estimator
+                        }
                         onChange={(v) =>
-                          updateProject('estimator', v)
+                          updateProject(
+                            'estimator',
+                            v
+                          )
                         }
                         placeholder="Prepared by"
                       />
@@ -684,9 +1192,14 @@ export default function Home() {
 
                     <Field label="Estimate date">
                       <TextInput
-                        value={project.date}
+                        value={
+                          project.date
+                        }
                         onChange={(v) =>
-                          updateProject('date', v)
+                          updateProject(
+                            'date',
+                            v
+                          )
                         }
                         type="date"
                       />
@@ -694,9 +1207,14 @@ export default function Home() {
 
                     <Field label="Framing system">
                       <TextInput
-                        value={project.framingSystem}
+                        value={
+                          project.framingSystem
+                        }
                         onChange={(v) =>
-                          updateProject('framingSystem', v)
+                          updateProject(
+                            'framingSystem',
+                            v
+                          )
                         }
                         placeholder="System and series"
                       />
@@ -729,7 +1247,7 @@ export default function Home() {
                   </div>
                 </section>
 
-                {/* STOREFRONT TAKEOFF SCHEDULE */}
+                {/* STOREFRONT OPENINGS */}
                 <section className="panel">
                   <div className="panel-heading">
                     <div>
@@ -754,21 +1272,23 @@ export default function Home() {
                   </div>
 
                   <p className="panel-subtitle">
-                    Enter opening dimensions in inches;
-                    mixed fractions such as{' '}
-                    <code>59 1/4</code> and feet such as{' '}
-                    <code>5' 3 1/2"</code> are supported.
-                    Areas are preliminary{' '}
-                    <em>opening areas</em>, not glass
-                    cut sizes.
+                    Enter opening dimensions in
+                    inches; mixed fractions such as{' '}
+                    <code>59 1/4</code> and feet
+                    such as{' '}
+                    <code>5' 3 1/2"</code> are
+                    supported. Areas are preliminary{' '}
+                    <em>opening areas</em>,
+                    not glass cut sizes.
                   </p>
 
                   {project.openings.map(
                     (opening, index) => {
-                      const line = calculateOpening(
-                        opening,
-                        p
-                      );
+                      const line =
+                        calculateOpening(
+                          opening,
+                          p
+                        );
 
                       return (
                         <div
@@ -778,10 +1298,9 @@ export default function Home() {
                           <div className="opening-heading">
                             <div className="opening-identity">
                               <span className="opening-index">
-                                {String(index + 1).padStart(
-                                  2,
-                                  '0'
-                                )}
+                                {String(
+                                  index + 1
+                                ).padStart(2, '0')}
                               </span>
 
                               <strong>
@@ -801,7 +1320,9 @@ export default function Home() {
                               title="Remove opening"
                               aria-label={`Remove ${opening.mark}`}
                               onClick={() =>
-                                removeOpening(opening.id)
+                                removeOpening(
+                                  opening.id
+                                )
                               }
                             >
                               ×
@@ -824,7 +1345,9 @@ export default function Home() {
                             <Field label="Type">
                               <select
                                 className="input"
-                                value={opening.openingType}
+                                value={
+                                  opening.openingType
+                                }
                                 onChange={(e) =>
                                   updateOpening(
                                     opening.id,
@@ -838,9 +1361,11 @@ export default function Home() {
                                 <option value="fixed">
                                   Fixed glazing
                                 </option>
+
                                 <option value="single-door">
                                   Single-door entrance
                                 </option>
+
                                 <option value="double-door">
                                   Double-door entrance
                                 </option>
@@ -877,7 +1402,9 @@ export default function Home() {
                               <NumberInput
                                 step={1}
                                 min={1}
-                                value={opening.quantity}
+                                value={
+                                  opening.quantity
+                                }
                                 onChange={(v) =>
                                   updateOpening(
                                     opening.id,
@@ -890,7 +1417,9 @@ export default function Home() {
                             <Field label="Glass specification">
                               <select
                                 className="input"
-                                value={opening.glassType}
+                                value={
+                                  opening.glassType
+                                }
                                 onChange={(e) =>
                                   updateOpening(
                                     opening.id,
@@ -918,7 +1447,9 @@ export default function Home() {
                               <NumberInput
                                 step={1}
                                 min={1}
-                                value={opening.columns}
+                                value={
+                                  opening.columns
+                                }
                                 onChange={(v) =>
                                   updateOpening(
                                     opening.id,
@@ -1019,7 +1550,8 @@ export default function Home() {
                                   updateOpening(
                                     opening.id,
                                     {
-                                      hardwareAllowance: v,
+                                      hardwareAllowance:
+                                        v,
                                     }
                                   )
                                 }
@@ -1057,9 +1589,13 @@ export default function Home() {
                             />
                           </Field>
 
+                          {/* LINE RESULTS */}
                           <div className="opening-result">
                             <div>
-                              <span>Glass area</span>
+                              <span>
+                                Glass area
+                              </span>
+
                               <strong>
                                 {line
                                   ? `${decimal(
@@ -1070,7 +1606,10 @@ export default function Home() {
                             </div>
 
                             <div>
-                              <span>Framing length</span>
+                              <span>
+                                Framing length
+                              </span>
+
                               <strong>
                                 {line
                                   ? `${decimal(
@@ -1084,22 +1623,34 @@ export default function Home() {
                               <span>
                                 Estimated line cost
                               </span>
+
                               <strong>
                                 {line
-                                  ? currency(line.total)
+                                  ? currency(
+                                      line.total
+                                    )
                                   : '—'}
                               </strong>
                             </div>
                           </div>
 
+                          {/* NEW LINE COMPUTATION DROPDOWN */}
+                          {line && (
+                            <OpeningCalculationBreakdown
+                              line={line}
+                              pricing={p}
+                            />
+                          )}
+
                           {opening.openingType !==
                             'fixed' && (
                             <div className="note-line">
-                              Door package is an allowance
-                              in addition to the modeled
-                              glazed-opening area and
-                              frame length; adjust to avoid
-                              double-counting supplier
+                              Door package is an
+                              allowance in addition to
+                              the modeled glazed-opening
+                              area and frame length;
+                              adjust to avoid double-
+                              counting supplier
                               inclusions.
                             </div>
                           )}
@@ -1123,14 +1674,19 @@ export default function Home() {
                       <span className="section-label">
                         03 / NOTES
                       </span>
-                      <h2>Scope & exclusions</h2>
+
+                      <h2>
+                        Scope & exclusions
+                      </h2>
                     </div>
                   </div>
 
                   <textarea
                     className="textarea"
                     rows={4}
-                    value={project.scopeNotes}
+                    value={
+                      project.scopeNotes
+                    }
                     onChange={(e) =>
                       updateProject(
                         'scopeNotes',
@@ -1142,7 +1698,7 @@ export default function Home() {
                 </section>
               </div>
 
-              {/* INTERNAL ESTIMATE SUMMARY */}
+              {/* ESTIMATE OVERVIEW */}
               <aside className="summary-column">
                 <section className="summary-card">
                   <div className="summary-header">
@@ -1150,7 +1706,10 @@ export default function Home() {
                       <span className="section-label light-label">
                         LIVE CALCULATION
                       </span>
-                      <h2>Estimate overview</h2>
+
+                      <h2>
+                        Estimate overview
+                      </h2>
                     </div>
 
                     <span className="summary-indicator" />
@@ -1158,12 +1717,15 @@ export default function Home() {
 
                   <div className="summary-hero">
                     <span>
-                      Estimated selling price (internal)
+                      Estimated selling price
+                      (internal)
                     </span>
 
                     <strong>
                       {valid
-                        ? currency(totals.sellingPrice)
+                        ? currency(
+                            totals.sellingPrice
+                          )
                         : 'Review inputs'}
                     </strong>
 
@@ -1173,21 +1735,27 @@ export default function Home() {
                         p.targetMarginPct,
                         1
                       )}
-                      % targeted margin after included
-                      costs and fees
+                      % targeted margin after
+                      included costs and fees
                     </small>
                   </div>
 
                   <div className="summary-stats">
                     <div>
-                      <span>Assemblies</span>
+                      <span>
+                        Assemblies
+                      </span>
+
                       <strong>
                         {totals.totalAssemblies}
                       </strong>
                     </div>
 
                     <div>
-                      <span>Gross glass area</span>
+                      <span>
+                        Gross glass area
+                      </span>
+
                       <strong>
                         {decimal(
                           totals.totalGlassSF
@@ -1197,7 +1765,10 @@ export default function Home() {
                     </div>
 
                     <div>
-                      <span>Net framing length</span>
+                      <span>
+                        Net framing length
+                      </span>
+
                       <strong>
                         {decimal(
                           totals.totalFrameLF
@@ -1210,22 +1781,30 @@ export default function Home() {
                   <div className="summary-breakdown">
                     <div>
                       <span>Glass</span>
+
                       <strong>
-                        {currency(totals.glassCost)}
+                        {currency(
+                          totals.glassCost
+                        )}
                       </strong>
                     </div>
 
                     <div>
                       <span>Frames</span>
+
                       <strong>
-                        {currency(totals.frameCost)}
+                        {currency(
+                          totals.frameCost
+                        )}
                       </strong>
                     </div>
 
                     <div>
                       <span>
-                        Door packages & extra hardware
+                        Door packages & extra
+                        hardware
                       </span>
+
                       <strong>
                         {currency(
                           totals.doorPackageCost +
@@ -1235,16 +1814,23 @@ export default function Home() {
                     </div>
 
                     <div>
-                      <span>Installation labor</span>
+                      <span>
+                        Installation labor
+                      </span>
+
                       <strong>
-                        {currency(totals.laborCost)}
+                        {currency(
+                          totals.laborCost
+                        )}
                       </strong>
                     </div>
 
                     <div>
                       <span>
-                        Freight, equipment, misc. & overhead
+                        Freight, equipment,
+                        misc. & overhead
                       </span>
+
                       <strong>
                         {currency(
                           totals.freight +
@@ -1256,23 +1842,35 @@ export default function Home() {
                     </div>
 
                     <div>
-                      <span>Contingency</span>
+                      <span>
+                        Contingency
+                      </span>
+
                       <strong>
-                        {currency(totals.contingency)}
+                        {currency(
+                          totals.contingency
+                        )}
                       </strong>
                     </div>
 
                     <div className="summary-total">
-                      <span>Total estimated cost</span>
+                      <span>
+                        Total estimated cost
+                      </span>
+
                       <strong>
-                        {currency(totals.totalCost)}
+                        {currency(
+                          totals.totalCost
+                        )}
                       </strong>
                     </div>
 
                     <div>
                       <span>
-                        Estimated commissions & processing
+                        Estimated commissions &
+                        processing
                       </span>
+
                       <strong>
                         {currency(
                           totals.commissionFee +
@@ -1283,9 +1881,10 @@ export default function Home() {
 
                     <div className="summary-profit">
                       <span>
-                        Projected profit after included
-                        costs/fees
+                        Projected profit after
+                        included costs/fees
                       </span>
+
                       <strong>
                         {valid
                           ? currency(
@@ -1296,9 +1895,17 @@ export default function Home() {
                     </div>
                   </div>
 
+                  {/* NEW PROJECT COMPUTATION DROPDOWN */}
+                  <ProjectCalculationBreakdown
+                    totals={totals}
+                    pricing={p}
+                  />
+
                   <button
                     className="summary-button"
-                    onClick={() => setTab('pricing')}
+                    onClick={() =>
+                      setTab('pricing')
+                    }
                   >
                     Review pricing & rates →
                   </button>
@@ -1313,27 +1920,31 @@ export default function Home() {
                 </section>
 
                 <p className="summary-disclaimer">
-                  Quantities are budgeting assumptions.
-                  This is not a fabrication takeoff,
-                  engineering check, or verified vendor
+                  Quantities are budgeting
+                  assumptions. This is not a
+                  fabrication takeoff, engineering
+                  check, or verified vendor
                   quotation.
                 </p>
               </aside>
             </div>
           )}
 
-          {/* PRICING AND RATES PAGE */}
+          {/* PRICING PAGE */}
           {tab === 'pricing' && (
             <div className="pricing-layout">
               <div className="pricing-main">
-                {/* MATERIAL RATES */}
+                {/* GLASS AND FRAMING */}
                 <section className="panel">
                   <div className="panel-heading">
                     <div>
                       <span className="section-label">
                         01 / MATERIAL RATES
                       </span>
-                      <h2>Glass & framing</h2>
+
+                      <h2>
+                        Glass & framing
+                      </h2>
                     </div>
 
                     <span className="tag tag-orange">
@@ -1342,36 +1953,44 @@ export default function Home() {
                   </div>
 
                   <p className="panel-subtitle">
-                    These rates are placeholder amounts
-                    in USD. Enter your current vendor
-                    cost rates. A line-item rate override
-                    takes precedence over these defaults.
+                    These rates are placeholder
+                    amounts in USD. Enter your
+                    current vendor cost rates.
+                    A line-item rate override
+                    takes precedence over these
+                    defaults.
                   </p>
 
                   <div className="form-grid">
-                    {GLASS_TYPES.map((glass) => (
-                      <Field
-                        key={glass}
-                        label={`${glass} — $ / SF`}
-                      >
-                        <NumberInput
-                          value={p.glassRates[glass]}
-                          onChange={(v) =>
-                            updatePricing(
-                              'glassRates',
-                              {
-                                ...p.glassRates,
-                                [glass]: v,
-                              }
-                            )
-                          }
-                        />
-                      </Field>
-                    ))}
+                    {GLASS_TYPES.map(
+                      (glass) => (
+                        <Field
+                          key={glass}
+                          label={`${glass} — $ / SF`}
+                        >
+                          <NumberInput
+                            value={
+                              p.glassRates[glass]
+                            }
+                            onChange={(v) =>
+                              updatePricing(
+                                'glassRates',
+                                {
+                                  ...p.glassRates,
+                                  [glass]: v,
+                                }
+                              )
+                            }
+                          />
+                        </Field>
+                      )
+                    )}
 
                     <Field label="Framing cost — $ / LF">
                       <NumberInput
-                        value={p.framingRatePerLF}
+                        value={
+                          p.framingRatePerLF
+                        }
                         onChange={(v) =>
                           updatePricing(
                             'framingRatePerLF',
@@ -1383,7 +2002,9 @@ export default function Home() {
 
                     <Field label="Labor rate — $ / hour">
                       <NumberInput
-                        value={p.laborRatePerHour}
+                        value={
+                          p.laborRatePerHour
+                        }
                         onChange={(v) =>
                           updatePricing(
                             'laborRatePerHour',
@@ -1395,7 +2016,9 @@ export default function Home() {
 
                     <Field label="Glass material allowance %">
                       <NumberInput
-                        value={p.glassWastePct}
+                        value={
+                          p.glassWastePct
+                        }
                         max={100}
                         onChange={(v) =>
                           updatePricing(
@@ -1408,7 +2031,9 @@ export default function Home() {
 
                     <Field label="Frame material allowance %">
                       <NumberInput
-                        value={p.frameWastePct}
+                        value={
+                          p.frameWastePct
+                        }
                         max={100}
                         onChange={(v) =>
                           updatePricing(
@@ -1421,21 +2046,26 @@ export default function Home() {
                   </div>
                 </section>
 
-                {/* DOOR ALLOWANCES */}
+                {/* ENTRANCE PACKAGES */}
                 <section className="panel">
                   <div className="panel-heading">
                     <div>
                       <span className="section-label">
                         02 / ENTRANCE PACKAGES
                       </span>
-                      <h2>Door cost allowances</h2>
+
+                      <h2>
+                        Door cost allowances
+                      </h2>
                     </div>
                   </div>
 
                   <div className="form-grid">
                     <Field label="Single-door package $ / assembly">
                       <NumberInput
-                        value={p.singleDoorPackage}
+                        value={
+                          p.singleDoorPackage
+                        }
                         onChange={(v) =>
                           updatePricing(
                             'singleDoorPackage',
@@ -1447,7 +2077,9 @@ export default function Home() {
 
                     <Field label="Double-door package $ / assembly">
                       <NumberInput
-                        value={p.doubleDoorPackage}
+                        value={
+                          p.doubleDoorPackage
+                        }
                         onChange={(v) =>
                           updatePricing(
                             'doubleDoorPackage',
@@ -1459,22 +2091,26 @@ export default function Home() {
                   </div>
 
                   <div className="note-line">
-                    These are optional cost allowances
-                    for entrance leaves, hardware, or
-                    supplier scope. They are not certified
-                    door BOMs and may overlap with other
+                    These are optional cost
+                    allowances for entrance leaves,
+                    hardware, or supplier scope.
+                    They are not certified door BOMs
+                    and may overlap with other
                     quoted items.
                   </div>
                 </section>
 
-                {/* PROJECT EXPENSES */}
+                {/* JOB COSTS */}
                 <section className="panel">
                   <div className="panel-heading">
                     <div>
                       <span className="section-label">
                         03 / PROJECT EXPENSES
                       </span>
-                      <h2>Additional job costs</h2>
+
+                      <h2>
+                        Additional job costs
+                      </h2>
                     </div>
                   </div>
 
@@ -1483,7 +2119,10 @@ export default function Home() {
                       <NumberInput
                         value={p.freight}
                         onChange={(v) =>
-                          updatePricing('freight', v)
+                          updatePricing(
+                            'freight',
+                            v
+                          )
                         }
                       />
                     </Field>
@@ -1492,14 +2131,19 @@ export default function Home() {
                       <NumberInput
                         value={p.equipment}
                         onChange={(v) =>
-                          updatePricing('equipment', v)
+                          updatePricing(
+                            'equipment',
+                            v
+                          )
                         }
                       />
                     </Field>
 
                     <Field label="Miscellaneous $">
                       <NumberInput
-                        value={p.miscellaneous}
+                        value={
+                          p.miscellaneous
+                        }
                         onChange={(v) =>
                           updatePricing(
                             'miscellaneous',
@@ -1511,7 +2155,9 @@ export default function Home() {
 
                     <Field label="Allocated overhead $">
                       <NumberInput
-                        value={p.overheadAllowance}
+                        value={
+                          p.overheadAllowance
+                        }
                         onChange={(v) =>
                           updatePricing(
                             'overheadAllowance',
@@ -1523,21 +2169,26 @@ export default function Home() {
                   </div>
                 </section>
 
-                {/* CONTINGENCY AND MARGINS */}
+                {/* PROFIT AND CONTINGENCY */}
                 <section className="panel">
                   <div className="panel-heading">
                     <div>
                       <span className="section-label">
                         04 / PROFIT POLICY
                       </span>
-                      <h2>Contingency & margins</h2>
+
+                      <h2>
+                        Contingency & margins
+                      </h2>
                     </div>
                   </div>
 
                   <div className="form-grid">
                     <Field label="Contingency %">
                       <NumberInput
-                        value={p.contingencyPct}
+                        value={
+                          p.contingencyPct
+                        }
                         max={100}
                         onChange={(v) =>
                           updatePricing(
@@ -1551,7 +2202,9 @@ export default function Home() {
                     <Field label="Contingency based on">
                       <select
                         className="input"
-                        value={p.contingencyBasis}
+                        value={
+                          p.contingencyBasis
+                        }
                         onChange={(e) =>
                           updatePricing(
                             'contingencyBasis',
@@ -1562,6 +2215,7 @@ export default function Home() {
                         <option value="glass">
                           Glass material cost
                         </option>
+
                         <option value="direct">
                           All direct project costs
                         </option>
@@ -1570,7 +2224,9 @@ export default function Home() {
 
                     <Field label="Target profit margin %">
                       <NumberInput
-                        value={p.targetMarginPct}
+                        value={
+                          p.targetMarginPct
+                        }
                         max={100}
                         onChange={(v) =>
                           updatePricing(
@@ -1583,7 +2239,9 @@ export default function Home() {
 
                     <Field label="Sales commission % of sales">
                       <NumberInput
-                        value={p.salesCommissionPct}
+                        value={
+                          p.salesCommissionPct
+                        }
                         max={100}
                         onChange={(v) =>
                           updatePricing(
@@ -1596,7 +2254,9 @@ export default function Home() {
 
                     <Field label="Payment-processing % of sales">
                       <NumberInput
-                        value={p.paymentProcessingPct}
+                        value={
+                          p.paymentProcessingPct
+                        }
                         max={100}
                         onChange={(v) =>
                           updatePricing(
@@ -1609,7 +2269,9 @@ export default function Home() {
                   </div>
 
                   <div className="formula-panel">
-                    <strong>Pricing formula</strong>
+                    <strong>
+                      Pricing formula
+                    </strong>
 
                     <code>
                       Sell = Total Cost ÷ [1 −
@@ -1620,33 +2282,40 @@ export default function Home() {
                     <p>
                       This is a target margin
                       calculation, not a markup
-                      calculation. The fees are treated
-                      as a percentage of selling price.
+                      calculation. The fees are
+                      treated as a percentage of
+                      selling price.
                     </p>
                   </div>
                 </section>
               </div>
 
-              {/* PROFITABILITY SUMMARY */}
+              {/* LIVE PROFIT MODEL */}
               <div className="pricing-side">
                 <section className="panel sticky-panel">
                   <span className="section-label">
                     LIVE PROFIT MODEL
                   </span>
 
-                  <h2>Pricing result</h2>
+                  <h2>
+                    Pricing result
+                  </h2>
 
                   <div className="pricing-totals">
                     <Stat
                       title="Estimated project cost"
-                      value={currency(totals.totalCost)}
+                      value={currency(
+                        totals.totalCost
+                      )}
                     />
 
                     <Stat
                       title="Estimated selling price (internal)"
                       value={
                         valid
-                          ? currency(totals.sellingPrice)
+                          ? currency(
+                              totals.sellingPrice
+                            )
                           : 'Review inputs'
                       }
                       hero
@@ -1656,7 +2325,9 @@ export default function Home() {
                       title="Projected profit"
                       value={
                         valid
-                          ? currency(totals.projectedProfit)
+                          ? currency(
+                              totals.projectedProfit
+                            )
                           : '—'
                       }
                     />
@@ -1676,7 +2347,9 @@ export default function Home() {
 
                   <button
                     className="btn btn-dark wide"
-                    onClick={() => setTab('estimate')}
+                    onClick={() =>
+                      setTab('estimate')
+                    }
                   >
                     ← Back to estimate
                   </button>
@@ -1688,7 +2361,7 @@ export default function Home() {
           {/* FOOTER */}
           <footer className="footer">
             <span>
-              Aspect Storefront Estimator · V1.1
+              Aspect Storefront Estimator · V1.2
             </span>
 
             <span>
