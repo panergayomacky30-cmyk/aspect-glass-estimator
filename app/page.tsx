@@ -21,14 +21,213 @@ import type {
   StorefrontOpening,
 } from '../lib/types';
 
-// ASPECT OFFICE FIT-OUT V1.6.2
-// Per-opening calculations, automatic glass and
-// framing rates, custom overrides, saved estimates.
+// ASPECT GLASSWORK ESTIMATING STUDIO V1.7.0
+// Storefront, Windows, Curtain Walls, Office Fit-Out.
+// One worksheet and profit target per opening.
 
-type Tab = 'estimate' | 'pricing' | 'saved';
+const WORKSPACES = [
+  'storefront',
+  'windows',
+  'curtain-walls',
+  'office-fit-out',
+] as const;
+
+type Workspace = (typeof WORKSPACES)[number];
+type Tab = Workspace | 'pricing' | 'saved';
 type Mode = 'calculated' | 'manual';
+type GlassStyle = 'Annealed' | 'Tempered';
+type PricingView = 'glass' | 'framing' | 'settings';
+type RateFilter = 'all' | 'priced' | 'unpriced';
+type LegacyGlassType = (typeof GLASS_TYPES)[number];
+
+const WORKSPACE_NAMES: Record<Workspace, string> = {
+  storefront: 'Storefront',
+  windows: 'Windows',
+  'curtain-walls': 'Curtain Walls',
+  'office-fit-out': 'Office Fit-Out',
+};
+
+const WORKSPACE_PREFIX: Record<Workspace, string> = {
+  storefront: 'SF',
+  windows: 'W',
+  'curtain-walls': 'CW',
+  'office-fit-out': 'OF',
+};
+
+function isWorkspace(value: unknown): value is Workspace {
+  return (
+    typeof value === 'string' &&
+    WORKSPACES.some(w => w === value)
+  );
+}
+
+// =====================================================
+// GLASS SPECIFICATIONS
+// =====================================================
+
+const GLASS_SPECIFICATIONS = [
+  '1/2" 1/4 Mirror Low Iron',
+  '1/2" Alice Printed White',
+  '3/8" Bronze',
+  '1/2" Bronze',
+  '3/8" Bubbles',
+  '3/8" Cast Glass',
+  '3/8" Clear 055 #3 White Print',
+  '1/2" Clear 055 #3 White Print',
+  '3/8" Clear',
+  '1/2" Clear',
+  '5/8" Clear',
+  '3/4" Clear',
+  '1" Clear',
+  '3/8" Gluechip',
+  '3/8" Grey',
+  '1/2" Grey',
+  '3/8" Laminate Acoustic Arctic White Clear',
+  '1/2" Laminate Acoustic Arctic White Clear',
+  '3/8" Laminate Acoustic Clear',
+  '1/2" Laminate Acoustic Clear',
+  '3/8" Laminate Acoustic Low Iron',
+  '1/2" Laminate Acoustic Low Iron',
+  '3/8" Laminate Artic White Clear',
+  '1/2" Laminate Artic White Clear',
+  '9/16" Laminate Clear SGP Interlayer',
+  '3/8" Laminate Clear',
+  '1/2" Laminate Clear',
+  '3/8" Laminate Low Iron',
+  '1/2" Laminate Low Iron',
+  '3/8" Low Iron 055 #3 White Print',
+  '3/8" Low Iron Alice Print White',
+  '3/8" Micro Ribbed',
+  '3/8" Low Iron Reeded',
+  '1/2" White Back Painted Glass',
+  '3/8" Low Iron',
+  '1/2" Low Iron',
+  '5/8" Low Iron',
+  '3/8" Master Care',
+  '3/8" Optiwhite',
+  '1/2" Optiwhite',
+  '5/8" Optiwhite',
+  '3/4" Optiwhite',
+  '3/8" Zeus Antique',
+  '3/8" Pyran Platinum Laminated',
+  '3/8" Rain',
+  '3/8" Reeded',
+  '3/8" Satin Starphire (Low Iron)',
+  '1/2" Satin Starphire (Low Iron)',
+  '3/8" Satin',
+  '1/2" Satin',
+  '3/8" Shower Guard Low Iron',
+  '1/2" Shower Guard Low Iron',
+  '3/8" Shower Guard',
+  '1/2" Shower Guard',
+  '3/8" Starphire (Low Iron)',
+  '1/2" Starphire (Low Iron)',
+  '5/8" Starphire (Low Iron)',
+  '3/4" Starphire (Low Iron)',
+  '3/8" Stipolite',
+  ...GLASS_TYPES,
+];
+
+const GLASS_OPTIONS = Array.from(
+  new Set<string>(GLASS_SPECIFICATIONS)
+);
+
+// =====================================================
+// GLASS GROUPS
+// =====================================================
+
+const GLASS_GROUP_NAMES = [
+  'Clear, Bronze & Grey',
+  'Low Iron, Optiwhite & Starphire',
+  'Laminated & Acoustic',
+  'Decorative, Mirror & Printed',
+  'Textured, Satin & Coated',
+  'Insulated Glass',
+] as const;
+
+type GlassGroup = (typeof GLASS_GROUP_NAMES)[number];
+
+function groupOf(spec: string): GlassGroup {
+  if (/Insulated/i.test(spec)) {
+    return 'Insulated Glass';
+  }
+
+  if (/Laminate|SGP Interlayer|Pyran/i.test(spec)) {
+    return 'Laminated & Acoustic';
+  }
+
+  if (/Mirror|Printed|White Print|Back Painted|Alice|055/i.test(spec)) {
+    return 'Decorative, Mirror & Printed';
+  }
+
+  if (
+    /Reeded|Ribbed|Bubbles|Gluechip|Cast Glass|Rain|Master Care|Zeus|Stipolite|Satin|Shower Guard/i.test(
+      spec
+    )
+  ) {
+    return 'Textured, Satin & Coated';
+  }
+
+  if (/Low Iron|Optiwhite|Starphire/i.test(spec)) {
+    return 'Low Iron, Optiwhite & Starphire';
+  }
+
+  return 'Clear, Bronze & Grey';
+}
+
+const GLASS_GROUPS = GLASS_GROUP_NAMES.map(name => ({
+  name,
+  specs: GLASS_OPTIONS.filter(spec => groupOf(spec) === name),
+}));
+
+const glassKey = (spec: string, style: GlassStyle) =>
+  `${spec}::${style}`;
+
+const permittedStyles = (spec: string): GlassStyle[] =>
+  /Tempered/i.test(spec)
+    ? ['Tempered']
+    : ['Annealed', 'Tempered'];
+
+function priceCategory(
+  spec: string,
+  style: GlassStyle
+): LegacyGlassType | null {
+  if (spec === '1/2" Clear' && style === 'Tempered') {
+    return '1/2" Clear Tempered';
+  }
+
+  if (spec === '1/4" Clear' && style === 'Tempered') {
+    return '1/4" Clear Tempered';
+  }
+
+  if (GLASS_TYPES.includes(spec as LegacyGlassType)) {
+    if (
+      spec.includes('Tempered') &&
+      style !== 'Tempered'
+    ) {
+      return null;
+    }
+
+    if (
+      spec.includes('Insulated') &&
+      style !== 'Tempered'
+    ) {
+      return null;
+    }
+
+    return spec as LegacyGlassType;
+  }
+
+  return null;
+}
+
+// =====================================================
+// TYPES
+// =====================================================
 
 type Opening = StorefrontOpening & {
+  glassSpecification: string;
+  glassStyle: GlassStyle;
   glassMode: Mode;
   hardwareMode: Mode;
   manualGlassCostEach: number;
@@ -38,6 +237,7 @@ type Opening = StorefrontOpening & {
 };
 
 type Rules = PricingRules & {
+  glassSpecRates: Record<string, number | null>;
   hardwareFixedFee: number;
   hardwareTaxPct: number;
   glassDiscountPct: number;
@@ -55,6 +255,7 @@ type Project = Omit<
 
 type Saved = {
   id: string;
+  workspace: Workspace;
   createdAt: string;
   updatedAt: string;
   project: Project;
@@ -103,23 +304,31 @@ type Totals = {
   complete: boolean;
 };
 
-// Preserve original browser storage keys.
+// =====================================================
+// STORAGE
+// =====================================================
+
 const DRAFT_KEY = 'aspect-storefront-estimator-v1';
-const LIBRARY_KEY =
-  'aspect-storefront-estimator-library-v1';
-const ACTIVE_KEY =
-  'aspect-storefront-estimator-active-v1';
+const LIBRARY_KEY = 'aspect-storefront-estimator-library-v1';
+const ACTIVE_KEY = 'aspect-storefront-estimator-active-v1';
+
+const WORKSPACE_DRAFTS_KEY =
+  'aspect-estimator-workspace-drafts-v1';
+
+const WORKSPACE_ACTIVE_KEY =
+  'aspect-estimator-workspace-active-v1';
+
+const CURRENT_WORKSPACE_KEY =
+  'aspect-estimator-current-workspace-v1';
 
 const n4 = (n: number) => decimal(n, 4);
 const pct = (n: number) => decimal(n, 2);
 
-const obj = (
-  v: unknown
-): Record<string, unknown> =>
+const obj = (v: unknown): Record<string, unknown> =>
   v !== null &&
   typeof v === 'object' &&
   !Array.isArray(v)
-    ? (v as Record<string, unknown>)
+    ? v as Record<string, unknown>
     : {};
 
 const nonneg = (
@@ -132,9 +341,7 @@ const nonneg = (
     ? v
     : fallback;
 
-const isMargin = (
-  v: unknown
-): v is number =>
+const isMargin = (v: unknown): v is number =>
   typeof v === 'number' &&
   Number.isFinite(v) &&
   v >= 0 &&
@@ -146,12 +353,37 @@ const clone = (p: Project): Project =>
   structuredClone(p);
 
 // =====================================================
-// SAVED PROJECT COMPATIBILITY
+// GLASS RATE LOOKUP
 // =====================================================
 
-function normalizeAppProject(
-  value: unknown
-): Project | null {
+function catalogRate(
+  spec: string,
+  style: GlassStyle,
+  p: Rules
+): number | null {
+  const key = glassKey(spec, style);
+
+  if (
+    Object.prototype.hasOwnProperty.call(
+      p.glassSpecRates,
+      key
+    )
+  ) {
+    return p.glassSpecRates[key];
+  }
+
+  const linked = priceCategory(spec, style);
+
+  return linked === null
+    ? null
+    : p.glassRates[linked];
+}
+
+// =====================================================
+// PROJECT NORMALIZATION
+// =====================================================
+
+function normalizeAppProject(value: unknown): Project | null {
   const base = normalizeProject(value);
 
   if (!base) return null;
@@ -172,9 +404,7 @@ function normalizeAppProject(
     ? nonneg(rp.opex) / totalQty
     : 0;
 
-  const legacyMargin = isMargin(
-    rp.targetGrossNetPct
-  )
+  const legacyMargin = isMargin(rp.targetGrossNetPct)
     ? rp.targetGrossNetPct
     : typeof rp.profitMarkupPct === 'number' &&
       rp.profitMarkupPct >= 0
@@ -190,6 +420,18 @@ function normalizeAppProject(
 
       return {
         ...o,
+
+        glassSpecification:
+          typeof r.glassSpecification === 'string' &&
+          r.glassSpecification.trim()
+            ? r.glassSpecification
+            : o.glassType,
+
+        glassStyle:
+          r.glassStyle === 'Annealed' ||
+          r.glassStyle === 'Tempered'
+            ? r.glassStyle
+            : 'Tempered',
 
         glassMode:
           r.glassMode === 'manual'
@@ -227,6 +469,20 @@ function normalizeAppProject(
     pricing: {
       ...base.pricing,
 
+      glassSpecRates: Object.fromEntries(
+        Object.entries(
+          obj(rp.glassSpecRates)
+        ).filter(
+          ([, value]) =>
+            value === null ||
+            (
+              typeof value === 'number' &&
+              Number.isFinite(value) &&
+              value >= 0
+            )
+        )
+      ) as Record<string, number | null>,
+
       hardwareFixedFee: nonneg(
         rp.hardwareFixedFee,
         15
@@ -242,10 +498,7 @@ function normalizeAppProject(
         17
       ),
 
-      riskPct: nonneg(
-        rp.riskPct,
-        10
-      ),
+      riskPct: nonneg(rp.riskPct, 10),
 
       ccSurchargePct: nonneg(
         rp.ccSurchargePct,
@@ -255,13 +508,62 @@ function normalizeAppProject(
   };
 }
 
+// =====================================================
+// NEW WORKSPACE PROJECTS
+// =====================================================
+
 function fresh(): Project {
   return normalizeAppProject(newProject()) as Project;
 }
 
-function freshOpening(index: number): Opening {
+function freshFor(workspace: Workspace): Project {
+  const project = fresh();
+
+  if (workspace === 'office-fit-out') {
+    return project;
+  }
+
+  project.projectName =
+    `New ${WORKSPACE_NAMES[workspace]} Project`;
+
+  project.estimateNumber = '';
+  project.openings = [freshOpening(1, workspace)];
+  project.scopeNotes = '';
+
+  project.framingSystem =
+    workspace === 'windows'
+      ? 'Aluminum window framing'
+      : workspace === 'curtain-walls'
+        ? 'Aluminum curtain wall framing'
+        : 'Aluminum storefront framing';
+
+  return project;
+}
+
+function newDrafts(): Record<Workspace, Project> {
   return {
-    ...newOpening(index),
+    storefront: freshFor('storefront'),
+    windows: freshFor('windows'),
+    'curtain-walls': freshFor('curtain-walls'),
+    'office-fit-out': freshFor('office-fit-out'),
+  };
+}
+
+function freshOpening(
+  index: number,
+  workspace: Workspace = 'storefront'
+): Opening {
+  const base = newOpening(index);
+
+  return {
+    ...base,
+
+    mark:
+      `${WORKSPACE_PREFIX[workspace]}-` +
+      String(index).padStart(2, '0'),
+
+    glassSpecification: base.glassType,
+    glassStyle: 'Tempered',
 
     glassMode: 'calculated',
     hardwareMode: 'calculated',
@@ -278,7 +580,7 @@ function freshOpening(index: number): Opening {
 }
 
 // =====================================================
-// PER-OPENING COST CALCULATIONS
+// CALCULATIONS
 // =====================================================
 
 function calculate(project: Project): Totals {
@@ -307,8 +609,7 @@ function calculate(project: Project): Totals {
     ['Double-door package', p.doubleDoorPackage],
 
     ...GLASS_TYPES.map(
-      g =>
-        [g, p.glassRates[g]] as [string, number]
+      g => [g, p.glassRates[g]] as [string, number]
     ),
   ];
 
@@ -340,6 +641,22 @@ function calculate(project: Project): Totals {
     }
   }
 
+  for (const [key, rate] of Object.entries(
+    p.glassSpecRates
+  )) {
+    if (
+      rate !== null &&
+      (
+        !Number.isFinite(rate) ||
+        rate < 0
+      )
+    ) {
+      errors.push(
+        `Invalid catalog rate: ${key}`
+      );
+    }
+  }
+
   for (const o of project.openings) {
     const label =
       o.mark.trim() || 'Unnamed opening';
@@ -351,9 +668,7 @@ function calculate(project: Project): Totals {
     }
 
     if (marks.has(label.toUpperCase())) {
-      errors.push(
-        `${label}: duplicate mark.`
-      );
+      errors.push(`${label}: duplicate mark.`);
     }
 
     marks.add(label.toUpperCase());
@@ -365,7 +680,6 @@ function calculate(project: Project): Totals {
       errors.push(
         `${label}: enter valid width and height.`
       );
-
       continue;
     }
 
@@ -406,33 +720,41 @@ function calculate(project: Project): Totals {
       continue;
     }
 
-    // ACTUAL GLASS RATE
-    // Uses type-specific Pricing & Rates unless
-    // the user entered an opening override.
+    const defaultGlassRate = catalogRate(
+      o.glassSpecification,
+      o.glassStyle,
+      p
+    );
 
     const glassRate =
       o.glassRateOverride ??
-      p.glassRates[o.glassType];
-
-    // ACTUAL FRAMING RATE
-    // Uses Pricing & Rates unless customized.
+      defaultGlassRate;
 
     const frameRate =
       o.frameRateOverride ??
       p.framingRatePerLF;
 
     if (
-      ![
-        glassRate,
-        frameRate,
-      ].every(
-        x =>
-          Number.isFinite(x) &&
-          x >= 0
+      o.glassMode === 'calculated' &&
+      (
+        glassRate === null ||
+        !Number.isFinite(glassRate) ||
+        glassRate < 0
       )
     ) {
       errors.push(
-        `${label}: material rate must be zero or greater.`
+        `${label}: No default $/SF for ${o.glassSpecification} (${o.glassStyle}). Enter a custom Glass Rate or choose Manual glass pricing.`
+      );
+
+      continue;
+    }
+
+    if (
+      !Number.isFinite(frameRate) ||
+      frameRate < 0
+    ) {
+      errors.push(
+        `${label}: framing rate must be zero or greater.`
       );
 
       continue;
@@ -446,15 +768,11 @@ function calculate(project: Project): Totals {
 
     const qty = o.quantity;
 
-    // GROSS GLASS AREA
-    // No waste allowance.
-
+    // Glass area, no material allowance.
     const glassSF =
       w * h / 144 * qty;
 
-    // SIMPLIFIED FRAME LENGTH
-    // No waste allowance.
-
+    // Simplified frame length.
     const frameLF =
       (
         2 * (w + h) +
@@ -469,14 +787,10 @@ function calculate(project: Project): Totals {
           ? p.doubleDoorPackage
           : 0;
 
-    // COST OF GLASS
-
     const glassCost =
       o.glassMode === 'manual'
         ? o.manualGlassCostEach * qty
-        : glassSF * glassRate;
-
-    // COST OF HARDWARE
+        : glassSF * (glassRate ?? 0);
 
     const hardwareCost =
       o.hardwareMode === 'manual'
@@ -487,9 +801,7 @@ function calculate(project: Project): Totals {
             o.hardwareAllowance
           ) * qty;
 
-    // TOTAL HARDWARE COST
-    // Fixed fee once per opening mark.
-
+    // Fixed hardware fee is charged once per mark.
     const totalHardwareCost =
       (
         hardwareCost +
@@ -500,8 +812,6 @@ function calculate(project: Project): Totals {
         p.hardwareTaxPct / 100
       );
 
-    // TOTAL GLASS COST
-
     const totalGlassCost =
       glassCost *
       (
@@ -509,26 +819,18 @@ function calculate(project: Project): Totals {
         p.glassDiscountPct / 100
       );
 
-    // OPEX
-
     const opex =
       o.opexPerAssembly * qty;
-
-    // RISK
 
     const risk =
       totalGlassCost *
       p.riskPct / 100;
-
-    // TOTAL COST / FINAL COST
 
     const totalCost =
       totalHardwareCost +
       totalGlassCost +
       opex +
       risk;
-
-    // PRICE
 
     const price = isMargin(
       o.targetGrossNetPct
@@ -540,15 +842,11 @@ function calculate(project: Project): Totals {
         )
       : null;
 
-    // CC SURCHARGE
-
     const ccSurcharge =
       price === null
         ? null
         : price *
           p.ccSurchargePct / 100;
-
-    // FINAL PRICE
 
     const finalPrice =
       price === null ||
@@ -556,14 +854,10 @@ function calculate(project: Project): Totals {
         ? null
         : price + ccSurcharge;
 
-    // GROSS NET
-
     const grossNet =
       price === null
         ? null
         : price - totalCost;
-
-    // ACTUAL GROSS NET PROFIT %
 
     const grossNetProfitPct =
       price !== null &&
@@ -574,31 +868,23 @@ function calculate(project: Project): Totals {
 
     lines.push({
       opening: o,
-
       width: w,
       height: h,
-
       glassSF,
       frameLF,
-
-      glassRate,
+      glassRate: glassRate ?? 0,
       frameRate,
       doorRate,
-
       glassCost,
       hardwareCost,
-
       totalGlassCost,
       totalHardwareCost,
-
       opex,
       risk,
       totalCost,
-
       price,
       ccSurcharge,
       finalPrice,
-
       grossNet,
       grossNetProfitPct,
     });
@@ -619,14 +905,12 @@ function calculate(project: Project): Totals {
     >
   ) =>
     lines.reduce(
-      (acc, line) =>
-        acc + line[key],
+      (acc, line) => acc + line[key],
       0
     );
 
   return {
     lines,
-
     errors: [...new Set(errors)],
 
     assemblies: lines.reduce(
@@ -679,7 +963,7 @@ function calculate(project: Project): Totals {
 }
 
 // =====================================================
-// DOWNLOAD HELPERS
+// FILE EXPORT
 // =====================================================
 
 function download(
@@ -688,10 +972,7 @@ function download(
   mime = 'application/json'
 ) {
   const url = URL.createObjectURL(
-    new Blob(
-      [data],
-      { type: mime }
-    )
+    new Blob([data], { type: mime })
   );
 
   const a = document.createElement('a');
@@ -711,8 +992,7 @@ function download(
 
 const safeName = (s: string) =>
   s.replace(/[^a-z0-9_-]+/gi, '-')
-    .slice(0, 64) ||
-  'estimate';
+    .slice(0, 64) || 'estimate';
 
 function csvCell(v: string | number) {
   let s = String(v);
@@ -838,19 +1118,6 @@ function MarginInput({
   );
 }
 
-// =====================================================
-// AUTOMATIC GLASS / FRAMING RATE INPUT
-// =====================================================
-
-// When no custom rate exists, the actual rate
-// automatically comes from Pricing & Rates.
-//
-// For glass: rate is tied to selected glass type.
-// For hardware: framing rate is tied to base
-// framing rate in Pricing & Rates.
-//
-// User can override or restore default.
-
 function RateInput({
   label,
   unit,
@@ -862,15 +1129,17 @@ function RateInput({
   label: string;
   unit: 'SF' | 'LF';
   selected: string;
-  defaultRate: number;
+  defaultRate: number | null;
   override: number | null;
   onChange: (rate: number | null) => void;
 }) {
   const usingDefault =
     override === null;
 
-  const effectiveRate =
-    override ?? defaultRate;
+  const rateLabel =
+    defaultRate === null
+      ? 'Not assigned'
+      : `${currency(defaultRate)}/${unit}`;
 
   return (
     <div className="field">
@@ -883,7 +1152,12 @@ function RateInput({
         type="number"
         min="0"
         step="0.01"
-        value={effectiveRate}
+        value={override ?? defaultRate ?? ''}
+        placeholder={
+          defaultRate === null
+            ? 'Enter custom rate'
+            : undefined
+        }
         onChange={e =>
           onChange(
             e.target.value === ''
@@ -896,18 +1170,16 @@ function RateInput({
       <span className="field-hint">
         {selected}
         {' · '}
-        Pricing &amp; Rates default:
-        {' '}
-        {currency(defaultRate)}/{unit}
-
+        Pricing &amp; Rates default: {rateLabel}
         {' · '}
-
         {usingDefault
-          ? 'Using automatic rate'
+          ? defaultRate === null
+            ? 'Custom rate required'
+            : 'Using automatic rate'
           : 'Custom rate for this opening'}
       </span>
 
-      {!usingDefault && (
+      {!usingDefault && defaultRate !== null && (
         <button
           type="button"
           className="btn btn-quiet"
@@ -927,7 +1199,7 @@ function RateInput({
 }
 
 // =====================================================
-// COMPUTATION DETAILS
+// COMPUTATION DISPLAY
 // =====================================================
 
 function Detail({
@@ -980,10 +1252,6 @@ function Detail({
   );
 }
 
-// =====================================================
-// COMPLETE OPENING WORKSHEET
-// =====================================================
-
 function Worksheet({
   l,
   p,
@@ -1026,20 +1294,8 @@ function Worksheet({
         title="Cost of Hardware"
         formula={
           o.hardwareMode === 'manual'
-            ? (
-              `${currency(
-                o.manualHardwareCostEach
-              )} per assembly × ${o.quantity}`
-            )
-            : (
-              `${n4(l.frameLF)} LF × ` +
-              `${currency(l.frameRate)}/LF + ` +
-              `${o.quantity} × (` +
-              `${currency(l.doorRate)} door + ` +
-              `${currency(
-                o.hardwareAllowance
-              )} extras)`
-            )
+            ? `${currency(o.manualHardwareCostEach)} per assembly × ${o.quantity}`
+            : `${n4(l.frameLF)} LF × ${currency(l.frameRate)}/LF + ${o.quantity} × (${currency(l.doorRate)} door + ${currency(o.hardwareAllowance)} extras)`
         }
         result={currency(l.hardwareCost)}
       />
@@ -1058,15 +1314,8 @@ function Worksheet({
         title="Cost of Glass"
         formula={
           o.glassMode === 'manual'
-            ? (
-              `${currency(
-                o.manualGlassCostEach
-              )} per assembly × ${o.quantity}`
-            )
-            : (
-              `${n4(l.glassSF)} SF × ` +
-              `${currency(l.glassRate)}/SF`
-            )
+            ? `${currency(o.manualGlassCostEach)} per assembly × ${o.quantity}`
+            : `${n4(l.glassSF)} SF × ${currency(l.glassRate)}/SF`
         }
         result={currency(l.glassCost)}
       />
@@ -1112,8 +1361,7 @@ function Worksheet({
       <Detail
         title="(gross) Net"
         formula={
-          `${m(l.price)} − ` +
-          `${currency(l.totalCost)}`
+          `${m(l.price)} − ${currency(l.totalCost)}`
         }
         result={m(l.grossNet)}
       />
@@ -1130,10 +1378,6 @@ function Worksheet({
     </>
   );
 }
-
-// =====================================================
-// EXPANDABLE COMPUTATION DROPDOWN
-// =====================================================
 
 function OpeningFormula({
   l,
@@ -1166,12 +1410,16 @@ function OpeningFormula({
         Show Computation — {o.mark}
       </summary>
 
+      <p style={{ fontSize: 12 }}>
+        <strong>Glass Specification:</strong>
+        {' '}
+        {o.glassSpecification} · {o.glassStyle}
+      </p>
+
       <Detail
         title="Gross opening area"
         formula={
-          `(${n4(l.width)} × ` +
-          `${n4(l.height)} ÷ 144) × ` +
-          `${o.quantity}`
+          `(${n4(l.width)} × ${n4(l.height)} ÷ 144) × ${o.quantity}`
         }
         result={`${n4(l.glassSF)} SF`}
       />
@@ -1179,13 +1427,9 @@ function OpeningFormula({
       <Detail
         title="Framing length"
         formula={
-          `[2 × (${n4(l.width)} + ` +
-          `${n4(l.height)}) + ` +
-          `(${o.columns} − 1) × ` +
-          `${n4(l.height)} + ` +
-          `(${o.rows} − 1) × ` +
-          `${n4(l.width)}] ÷ 12 × ` +
-          `${o.quantity}`
+          `[2 × (${n4(l.width)} + ${n4(l.height)}) + ` +
+          `(${o.columns} − 1) × ${n4(l.height)} + ` +
+          `(${o.rows} − 1) × ${n4(l.width)}] ÷ 12 × ${o.quantity}`
         }
         result={`${n4(l.frameLF)} LF`}
       />
@@ -1198,10 +1442,9 @@ function OpeningFormula({
           color: '#657987',
         }}
       >
-        Complete worksheet for this opening mark,
-        including all quantities. The fixed hardware
-        fee is charged once per mark. No 5% material
-        allowance is added.
+        Preliminary takeoff quantities. The fixed
+        hardware fee is charged once per mark.
+        No material waste allowance is added.
       </p>
     </details>
   );
@@ -1221,17 +1464,40 @@ const smallBtn: CSSProperties = {
 // =====================================================
 
 export default function Home() {
-  const [project, setProject] =
-    useState<Project>(() => fresh());
+  const [drafts, setDrafts] = useState<
+    Record<Workspace, Project>
+  >(() => newDrafts());
+
+  const [workspace, setWorkspace] =
+    useState<Workspace>('office-fit-out');
 
   const [tab, setTab] =
-    useState<Tab>('estimate');
+    useState<Tab>('office-fit-out');
+
+  const [activeIds, setActiveIds] = useState<
+    Partial<Record<Workspace, string>>
+  >({});
+
+  const [savedFilter, setSavedFilter] = useState<
+    Workspace | 'all'
+  >('all');
+
+  const [pricingView, setPricingView] =
+    useState<PricingView>('glass');
+
+  const [glassSearch, setGlassSearch] =
+    useState('');
+
+  const [rateFilter, setRateFilter] =
+    useState<RateFilter>('all');
+
+  const [expandedGroups, setExpandedGroups] =
+    useState<string[]>([
+      'Clear, Bronze & Grey',
+    ]);
 
   const [library, setLibrary] =
     useState<Saved[]>([]);
-
-  const [activeId, setActiveId] =
-    useState<string | null>(null);
 
   const [
     selectedOpeningId,
@@ -1247,11 +1513,19 @@ export default function Home() {
   const [search, setSearch] =
     useState('');
 
+  const [styleMenuId, setStyleMenuId] =
+    useState<string | null>(null);
+
   const importRef =
     useRef<HTMLInputElement>(null);
 
   const libraryRef =
     useRef<HTMLInputElement>(null);
+
+  const project = drafts[workspace];
+
+  const activeId =
+    activeIds[workspace] ?? null;
 
   const totals = useMemo(
     () => calculate(project),
@@ -1276,16 +1550,21 @@ export default function Home() {
       JSON.stringify(project);
 
   const matches = library
-    .filter(x =>
-      [
-        x.project.projectName,
-        x.project.estimateNumber,
-        x.project.clientName,
-        x.project.location,
-      ]
-        .join(' ')
-        .toLowerCase()
-        .includes(search.trim().toLowerCase())
+    .filter(
+      x =>
+        (
+          savedFilter === 'all' ||
+          x.workspace === savedFilter
+        ) &&
+        [
+          x.project.projectName,
+          x.project.estimateNumber,
+          x.project.clientName,
+          x.project.location,
+        ]
+          .join(' ')
+          .toLowerCase()
+          .includes(search.trim().toLowerCase())
     )
     .sort(
       (a, b) =>
@@ -1293,86 +1572,179 @@ export default function Home() {
     );
 
   // ==================================================
-  // LOAD SAVED PROJECTS
+  // WORKSPACE NAVIGATION
+  // ==================================================
+
+  function setProject(
+    fn: (old: Project) => Project
+  ) {
+    setDrafts(old => ({
+      ...old,
+      [workspace]: fn(old[workspace]),
+    }));
+  }
+
+  function goWorkspace(next: Workspace) {
+    setWorkspace(next);
+    setTab(next);
+
+    setSelectedOpeningId(null);
+    setStyleMenuId(null);
+    setNotice('');
+  }
+
+  // ==================================================
+  // LOAD SAVED DATA
   // ==================================================
 
   useEffect(() => {
     try {
-      const draft =
-        localStorage.getItem(DRAFT_KEY);
+      const result = newDrafts();
 
-      if (draft) {
-        setProject(
-          normalizeAppProject(
-            JSON.parse(draft)
-          ) ?? fresh()
+      const workspaceDrafts =
+        localStorage.getItem(
+          WORKSPACE_DRAFTS_KEY
         );
-      }
 
-      const saved =
-        localStorage.getItem(LIBRARY_KEY);
+      if (workspaceDrafts) {
+        const raw = obj(
+          JSON.parse(workspaceDrafts)
+        );
 
-      if (saved) {
-        const parsed: unknown =
-          JSON.parse(saved);
+        for (const name of WORKSPACES) {
+          const normalized =
+            normalizeAppProject(raw[name]);
 
-        if (Array.isArray(parsed)) {
-          const records: Saved[] = parsed
-            .slice(0, 250)
-            .flatMap(
-              (item): Saved[] => {
-                const r = obj(item);
+          if (normalized) {
+            result[name] = normalized;
+          }
+        }
+      } else {
+        // Migrate the previous Office Fit-Out draft.
+        const legacy =
+          localStorage.getItem(DRAFT_KEY);
 
-                const pr =
-                  normalizeAppProject(
-                    r.project
-                  );
+        if (legacy) {
+          const old = normalizeAppProject(
+            JSON.parse(legacy)
+          );
 
-                if (!pr) return [];
-
-                return [{
-                  id:
-                    typeof r.id === 'string'
-                      ? r.id
-                      : id(),
-
-                  createdAt:
-                    typeof r.createdAt === 'string'
-                      ? r.createdAt
-                      : new Date()
-                          .toISOString(),
-
-                  updatedAt:
-                    typeof r.updatedAt === 'string'
-                      ? r.updatedAt
-                      : new Date()
-                          .toISOString(),
-
-                  project: pr,
-                }];
-              }
-            );
-
-          setLibrary(records);
-
-          const savedId =
-            localStorage.getItem(
-              ACTIVE_KEY
-            );
-
-          if (
-            savedId &&
-            records.some(
-              x => x.id === savedId
-            )
-          ) {
-            setActiveId(savedId);
+          if (old) {
+            result['office-fit-out'] = old;
           }
         }
       }
+
+      setDrafts(result);
+
+      const savedRaw =
+        localStorage.getItem(LIBRARY_KEY);
+
+      let records: Saved[] = [];
+
+      if (savedRaw) {
+        const parsed: unknown =
+          JSON.parse(savedRaw);
+
+        if (Array.isArray(parsed)) {
+          records = parsed
+            .slice(0, 250)
+            .flatMap((item): Saved[] => {
+              const r = obj(item);
+
+              const pr = normalizeAppProject(
+                r.project
+              );
+
+              if (!pr) return [];
+
+              return [{
+                id:
+                  typeof r.id === 'string'
+                    ? r.id
+                    : id(),
+
+                workspace:
+                  isWorkspace(r.workspace)
+                    ? r.workspace
+                    : 'office-fit-out',
+
+                createdAt:
+                  typeof r.createdAt === 'string'
+                    ? r.createdAt
+                    : new Date().toISOString(),
+
+                updatedAt:
+                  typeof r.updatedAt === 'string'
+                    ? r.updatedAt
+                    : new Date().toISOString(),
+
+                project: pr,
+              }];
+            });
+        }
+      }
+
+      setLibrary(records);
+
+      const savedActive =
+        localStorage.getItem(
+          WORKSPACE_ACTIVE_KEY
+        );
+
+      const active: Partial<
+        Record<Workspace, string>
+      > = {};
+
+      if (savedActive) {
+        const raw = obj(
+          JSON.parse(savedActive)
+        );
+
+        for (const name of WORKSPACES) {
+          const value = raw[name];
+
+          if (
+            typeof value === 'string' &&
+            records.some(
+              x =>
+                x.id === value &&
+                x.workspace === name
+            )
+          ) {
+            active[name] = value;
+          }
+        }
+      } else {
+        const legacyActive =
+          localStorage.getItem(ACTIVE_KEY);
+
+        if (
+          legacyActive &&
+          records.some(
+            x =>
+              x.id === legacyActive &&
+              x.workspace === 'office-fit-out'
+          )
+        ) {
+          active['office-fit-out'] = legacyActive;
+        }
+      }
+
+      setActiveIds(active);
+
+      const lastWorkspace =
+        localStorage.getItem(
+          CURRENT_WORKSPACE_KEY
+        );
+
+      if (isWorkspace(lastWorkspace)) {
+        setWorkspace(lastWorkspace);
+        setTab(lastWorkspace);
+      }
     } catch {
       setNotice(
-        'Some browser data could not be loaded. Restore a backup if necessary.'
+        'Some stored estimates could not be loaded. Restore a backup if necessary.'
       );
     }
 
@@ -1380,7 +1752,7 @@ export default function Home() {
   }, []);
 
   // ==================================================
-  // AUTOMATIC DRAFT SAVE
+  // AUTOSAVE WORKSPACE DRAFTS
   // ==================================================
 
   useEffect(() => {
@@ -1388,18 +1760,33 @@ export default function Home() {
 
     try {
       localStorage.setItem(
-        DRAFT_KEY,
-        JSON.stringify(project)
+        WORKSPACE_DRAFTS_KEY,
+        JSON.stringify(drafts)
+      );
+
+      localStorage.setItem(
+        WORKSPACE_ACTIVE_KEY,
+        JSON.stringify(activeIds)
+      );
+
+      localStorage.setItem(
+        CURRENT_WORKSPACE_KEY,
+        workspace
       );
     } catch {
       setNotice(
-        'Browser storage is full. Download a backup.'
+        'Browser storage is full. Back up your estimates.'
       );
     }
-  }, [project, ready]);
+  }, [
+    drafts,
+    activeIds,
+    workspace,
+    ready,
+  ]);
 
   // ==================================================
-  // INPUT UPDATES
+  // EDIT FUNCTIONS
   // ==================================================
 
   function setInfo<K extends keyof Project>(
@@ -1426,6 +1813,76 @@ export default function Home() {
     }));
   }
 
+  function setCatalogRate(
+    spec: string,
+    style: GlassStyle,
+    rate: number | null
+  ) {
+    setProject(old => {
+      const updated = {
+        ...old.pricing.glassSpecRates,
+        [glassKey(spec, style)]: rate,
+      };
+
+      const linked = priceCategory(
+        spec,
+        style
+      );
+
+      if (linked === '1/2" Clear Tempered') {
+        updated[
+          glassKey('1/2" Clear', 'Tempered')
+        ] = rate;
+
+        updated[
+          glassKey(
+            '1/2" Clear Tempered',
+            'Tempered'
+          )
+        ] = rate;
+      }
+
+      if (linked === '1/4" Clear Tempered') {
+        updated[
+          glassKey('1/4" Clear', 'Tempered')
+        ] = rate;
+
+        updated[
+          glassKey(
+            '1/4" Clear Tempered',
+            'Tempered'
+          )
+        ] = rate;
+      }
+
+      return {
+        ...old,
+
+        pricing: {
+          ...old.pricing,
+
+          glassSpecRates: updated,
+
+          glassRates:
+            linked !== null && rate !== null
+              ? {
+                  ...old.pricing.glassRates,
+                  [linked]: rate,
+                }
+              : old.pricing.glassRates,
+        },
+      };
+    });
+  }
+
+  function toggleGroup(name: string) {
+    setExpandedGroups(old =>
+      old.includes(name)
+        ? old.filter(item => item !== name)
+        : [...old, name]
+    );
+  }
+
   function setOpening(
     openingId: string,
     patch: Partial<Opening>
@@ -1449,22 +1906,23 @@ export default function Home() {
       )
     );
 
-    let k =
-      project.openings.length + 1;
+    let k = project.openings.length + 1;
 
     while (
       used.has(
-        `SF-${String(k).padStart(2, '0')}`
+        `${WORKSPACE_PREFIX[workspace]}-${String(k).padStart(2, '0')}`
       )
     ) {
       k++;
     }
 
-    const next = freshOpening(k);
+    const next = freshOpening(
+      k,
+      workspace
+    );
 
     setProject(old => ({
       ...old,
-
       openings: [
         ...old.openings,
         next,
@@ -1486,6 +1944,7 @@ export default function Home() {
       setNotice(
         'Library limit reached (250). Back up older records.'
       );
+
       return false;
     }
 
@@ -1503,6 +1962,7 @@ export default function Home() {
       setNotice(
         'Library could not be saved. Back up and check browser storage.'
       );
+
       return false;
     }
   }
@@ -1511,7 +1971,9 @@ export default function Home() {
     if (!ready) return;
 
     const previous = library.find(
-      x => x.id === activeId
+      x =>
+        x.id === activeId &&
+        x.workspace === workspace
     );
 
     const nextId =
@@ -1522,12 +1984,12 @@ export default function Home() {
 
     const record: Saved = {
       id: nextId,
+      workspace,
 
       createdAt:
         previous?.createdAt ?? now,
 
       updatedAt: now,
-
       project: clone(project),
     };
 
@@ -1546,55 +2008,73 @@ export default function Home() {
           : 'Estimate saved.'
       )
     ) {
-      setActiveId(nextId);
-
-      localStorage.setItem(
-        ACTIVE_KEY,
-        nextId
-      );
+      setActiveIds(old => ({
+        ...old,
+        [workspace]: nextId,
+      }));
     }
   }
 
-  function safeSwitch() {
+  function safeSwitch(
+    target: Workspace = workspace
+  ) {
+    const record = library.find(
+      x =>
+        x.id === activeIds[target] &&
+        x.workspace === target
+    );
+
+    const unchanged =
+      !!record &&
+      JSON.stringify(record.project) ===
+        JSON.stringify(drafts[target]);
+
     return (
-      !dirty ||
+      unchanged ||
       confirm(
-        'You have unsaved changes. Save your estimate first if needed. Continue?'
+        `Replace the current ${WORKSPACE_NAMES[target]} draft? Unsaved changes will be lost. You can cancel and save it first.`
       )
     );
   }
 
   function openSaved(record: Saved) {
-    if (!safeSwitch()) return;
+    if (!safeSwitch(record.workspace)) {
+      return;
+    }
 
-    setProject(
-      clone(record.project)
-    );
+    setDrafts(old => ({
+      ...old,
 
-    setActiveId(record.id);
+      [record.workspace]: clone(
+        record.project
+      ),
+    }));
+
+    setActiveIds(old => ({
+      ...old,
+      [record.workspace]: record.id,
+    }));
+
+    setWorkspace(record.workspace);
     setSelectedOpeningId(null);
-
-    localStorage.setItem(
-      ACTIVE_KEY,
-      record.id
-    );
-
-    setTab('estimate');
+    setTab(record.workspace);
   }
 
   function newEstimate() {
     if (!safeSwitch()) return;
 
-    setProject(fresh());
-
-    setActiveId(null);
-    setSelectedOpeningId(null);
-
-    localStorage.removeItem(
-      ACTIVE_KEY
+    setProject(
+      () => freshFor(workspace)
     );
 
-    setTab('estimate');
+    setActiveIds(old => {
+      const next = { ...old };
+      delete next[workspace];
+      return next;
+    });
+
+    setSelectedOpeningId(null);
+    setTab(workspace);
   }
 
   function duplicate(record: Saved) {
@@ -1610,6 +2090,7 @@ export default function Home() {
       [
         {
           id: id(),
+          workspace: record.workspace,
           createdAt: now,
           updatedAt: now,
           project: pr,
@@ -1651,12 +2132,16 @@ export default function Home() {
 
         'Estimate renamed.'
       ) &&
-      activeId === record.id
+      activeIds[record.workspace] === record.id
     ) {
-      setInfo(
-        'projectName',
-        name
-      );
+      setDrafts(old => ({
+        ...old,
+
+        [record.workspace]: {
+          ...old[record.workspace],
+          projectName: name,
+        },
+      }));
     }
   }
 
@@ -1677,26 +2162,31 @@ export default function Home() {
 
         'Estimate deleted.'
       ) &&
-      activeId === record.id
+      activeIds[record.workspace] === record.id
     ) {
-      setActiveId(null);
-
-      localStorage.removeItem(
-        ACTIVE_KEY
-      );
+      setActiveIds(old => {
+        const next = { ...old };
+        delete next[record.workspace];
+        return next;
+      });
     }
   }
 
   // ==================================================
-  // BACKUP AND IMPORT
+  // BACKUP
   // ==================================================
 
   function backupDraft() {
     download(
-      `${safeName(project.estimateNumber)}.json`,
+      `${workspace}-${safeName(project.estimateNumber)}.json`,
 
       JSON.stringify(
-        project,
+        {
+          format: 'aspect-workspace-estimate',
+          workspace,
+          project,
+        },
+
         null,
         2
       )
@@ -1710,7 +2200,7 @@ export default function Home() {
       JSON.stringify(
         {
           format: 'aspect-estimator-library',
-          version: 4,
+          version: 5,
           estimates: library,
         },
 
@@ -1720,6 +2210,10 @@ export default function Home() {
     );
   }
 
+  // ==================================================
+  // IMPORT
+  // ==================================================
+
   async function importDraft(file?: File) {
     if (!file) return;
 
@@ -1728,28 +2222,44 @@ export default function Home() {
         throw Error('Too large');
       }
 
-      const pr =
-        normalizeAppProject(
-          JSON.parse(
-            await file.text()
-          )
-        );
+      const payload = JSON.parse(
+        await file.text()
+      );
+
+      const content = obj(payload);
+
+      const pr = normalizeAppProject(
+        content.format ===
+          'aspect-workspace-estimate'
+          ? content.project
+          : payload
+      );
 
       if (!pr) {
         throw Error('Invalid');
       }
 
-      if (!safeSwitch()) return;
+      const target =
+        isWorkspace(content.workspace)
+          ? content.workspace
+          : workspace;
 
-      setProject(pr);
-      setActiveId(null);
+      if (!safeSwitch(target)) return;
+
+      setDrafts(old => ({
+        ...old,
+        [target]: pr,
+      }));
+
+      setActiveIds(old => {
+        const next = { ...old };
+        delete next[target];
+        return next;
+      });
+
+      setWorkspace(target);
       setSelectedOpeningId(null);
-
-      localStorage.removeItem(
-        ACTIVE_KEY
-      );
-
-      setTab('estimate');
+      setTab(target);
 
       setNotice(
         'Estimate imported. Save it to add it to Saved Estimates.'
@@ -1774,9 +2284,7 @@ export default function Home() {
       }
 
       const raw = obj(
-        JSON.parse(
-          await file.text()
-        )
+        JSON.parse(await file.text())
       );
 
       if (
@@ -1790,43 +2298,43 @@ export default function Home() {
         throw Error('Invalid');
       }
 
-      const imported =
-        raw.estimates.map(
-          (item: unknown): Saved => {
-            const r = obj(item);
+      const imported = raw.estimates.map(
+        (item: unknown): Saved => {
+          const r = obj(item);
 
-            const pr =
-              normalizeAppProject(
-                r.project
-              );
+          const pr = normalizeAppProject(
+            r.project
+          );
 
-            if (!pr) {
-              throw Error(
-                'Invalid estimate'
-              );
-            }
-
-            const now =
-              new Date()
-                .toISOString();
-
-            return {
-              id: id(),
-
-              createdAt:
-                typeof r.createdAt === 'string'
-                  ? r.createdAt
-                  : now,
-
-              updatedAt:
-                typeof r.updatedAt === 'string'
-                  ? r.updatedAt
-                  : now,
-
-              project: pr,
-            };
+          if (!pr) {
+            throw Error('Invalid estimate');
           }
-        );
+
+          const now =
+            new Date().toISOString();
+
+          return {
+            id: id(),
+
+            workspace:
+              isWorkspace(r.workspace)
+                ? r.workspace
+                : 'office-fit-out',
+
+            createdAt:
+              typeof r.createdAt === 'string'
+                ? r.createdAt
+                : now,
+
+            updatedAt:
+              typeof r.updatedAt === 'string'
+                ? r.updatedAt
+                : now,
+
+            project: pr,
+          };
+        }
+      );
 
       if (
         confirm(
@@ -1854,12 +2362,14 @@ export default function Home() {
   }
 
   // ==================================================
-  // EXPORT TAKEOFF
+  // CSV EXPORT
   // ==================================================
 
   function exportCSV() {
     const header = [
       'Mark',
+      'Glass Specification',
+      'Glass Style',
       'Qty',
       'Width in',
       'Height in',
@@ -1877,45 +2387,35 @@ export default function Home() {
       'Final Price with CC',
     ];
 
-    const rows = totals.lines.map(
-      l => [
-        l.opening.mark,
-        l.opening.quantity,
-
-        l.width,
-        l.height,
-
-        l.glassSF.toFixed(4),
-        l.frameLF.toFixed(4),
-
-        l.hardwareCost.toFixed(2),
-        l.totalHardwareCost.toFixed(2),
-
-        l.glassCost.toFixed(2),
-        l.totalGlassCost.toFixed(2),
-
-        l.opex.toFixed(2),
-        l.risk.toFixed(2),
-        l.totalCost.toFixed(2),
-
-        l.opening.targetGrossNetPct ?? '',
-
-        l.price?.toFixed(2) ?? '',
-        l.finalPrice?.toFixed(2) ?? '',
-      ]
-    );
+    const rows = totals.lines.map(l => [
+      l.opening.mark,
+      l.opening.glassSpecification,
+      l.opening.glassStyle,
+      l.opening.quantity,
+      l.width,
+      l.height,
+      l.glassSF.toFixed(4),
+      l.frameLF.toFixed(4),
+      l.hardwareCost.toFixed(2),
+      l.totalHardwareCost.toFixed(2),
+      l.glassCost.toFixed(2),
+      l.totalGlassCost.toFixed(2),
+      l.opex.toFixed(2),
+      l.risk.toFixed(2),
+      l.totalCost.toFixed(2),
+      l.opening.targetGrossNetPct ?? '',
+      l.price?.toFixed(2) ?? '',
+      l.finalPrice?.toFixed(2) ?? '',
+    ]);
 
     download(
-      `${safeName(
-        project.estimateNumber
-      )}-takeoff.csv`,
+      `${workspace}-${safeName(project.estimateNumber)}-takeoff.csv`,
 
       '\uFEFF' +
         [header, ...rows]
           .map(
             r =>
-              r.map(csvCell)
-                .join(',')
+              r.map(csvCell).join(',')
           )
           .join('\r\n'),
 
@@ -1977,7 +2477,7 @@ export default function Home() {
   );
 
   // ==================================================
-  // WEBSITE INTERFACE
+  // APPLICATION INTERFACE
   // ==================================================
 
   return (
@@ -1992,20 +2492,15 @@ export default function Home() {
           </span>
 
           <span className="brand-names">
-            <strong>
-              ASPECT GLASSWORK
-            </strong>
-
-            <small>
-              ESTIMATING STUDIO
-            </small>
+            <strong>ASPECT GLASSWORK</strong>
+            <small>ESTIMATING STUDIO</small>
           </span>
         </div>
 
         <div className="topbar-right">
           <span className="top-pill">
             <span className="green-dot" />
-            Browser-based · V1.6.2
+            Browser-based · V1.7.0
           </span>
 
           <span className="autosave">
@@ -2025,18 +2520,27 @@ export default function Home() {
             WORKSPACE
           </p>
 
-          <button
-            className={`navitem ${
-              tab === 'estimate'
-                ? 'active'
-                : ''
-            }`}
-            onClick={() =>
-              setTab('estimate')
-            }
-          >
-            ▦ Office Fit-Out
-          </button>
+          {WORKSPACES.map(name => (
+            <button
+              key={name}
+              className={`navitem ${
+                tab === name ? 'active' : ''
+              }`}
+              onClick={() =>
+                goWorkspace(name)
+              }
+            >
+              {name === 'storefront'
+                ? '▦'
+                : name === 'windows'
+                  ? '▤'
+                  : name === 'curtain-walls'
+                    ? '▥'
+                    : '▣'}
+              {' '}
+              {WORKSPACE_NAMES[name]}
+            </button>
+          ))}
 
           <button
             className={`navitem ${
@@ -2068,41 +2572,41 @@ export default function Home() {
 
           <div className="sidebar-help">
             <strong>
-              Estimator V1.6.2
+              Estimator V1.7.0
             </strong>
 
             <p>
-              Every opening has its own profit
-              target and pricing worksheet.
-              Saved projects stay in this browser;
-              back them up regularly.
+              Each workspace has its own draft
+              and cost worksheet. Saved projects
+              are categorized by workspace and
+              stored in this browser.
             </p>
           </div>
         </aside>
 
-        {/* MAIN CONTENT */}
+        {/* MAIN AREA */}
 
         <main className="main">
-
           <div className="page-toolbar">
             <div>
               <div className="eyebrow">
-                COMMERCIAL GLAZING / STOREFRONTS
+                COMMERCIAL GLAZING /{' '}
+                {WORKSPACE_NAMES[workspace].toUpperCase()}
               </div>
 
               <h1>
-                {tab === 'estimate'
-                  ? 'Office Fit-Out'
-                  : tab === 'pricing'
-                    ? 'Pricing & Cost Rules'
-                    : 'Saved Estimates'}
+                {tab === 'pricing'
+                  ? 'Pricing & Cost Rules'
+                  : tab === 'saved'
+                    ? 'Saved Estimates'
+                    : WORKSPACE_NAMES[tab]}
               </h1>
 
               <p className="page-desc">
-                {tab === 'estimate'
+                {tab !== 'pricing' && tab !== 'saved'
                   ? 'Set glass, hardware, OPEX and Gross Net Profit % for each opening separately.'
                   : tab === 'pricing'
-                    ? 'Shared hardware fee, tax, glass discount, risk and CC surcharge rates.'
+                    ? 'Organized glass rates, framing rates, and worksheet settings.'
                     : 'Search and reopen your saved projects.'}
               </p>
             </div>
@@ -2134,27 +2638,33 @@ export default function Home() {
           <div className="nav-mobile">
             {(
               [
-                ['estimate', 'Office Fit-Out'],
+                ...WORKSPACES.map(
+                  w =>
+                    [
+                      w,
+                      WORKSPACE_NAMES[w],
+                    ] as [Tab, string]
+                ),
                 ['pricing', 'Pricing'],
                 ['saved', 'Saved Estimates'],
               ] as [Tab, string][]
-            ).map(
-              ([key, label]) => (
-                <button
-                  key={key}
-                  className={
-                    tab === key
-                      ? 'selected'
-                      : ''
-                  }
-                  onClick={() =>
-                    setTab(key)
-                  }
-                >
-                  {label}
-                </button>
-              )
-            )}
+            ).map(([key, label]) => (
+              <button
+                key={key}
+                className={
+                  tab === key
+                    ? 'selected'
+                    : ''
+                }
+                onClick={() =>
+                  isWorkspace(key)
+                    ? goWorkspace(key)
+                    : setTab(key)
+                }
+              >
+                {label}
+              </button>
+            ))}
           </div>
 
           {/* WARNINGS */}
@@ -2167,11 +2677,10 @@ export default function Home() {
                 </strong>
 
                 {' '}
-                Profit % and OPEX are set
-                individually per opening.
-                Calculated rates are taken from
-                Pricing &amp; Rates unless overridden.
-                Confirm supplier costs before quoting.
+                Profit % and OPEX are set individually
+                per opening. No material waste allowance
+                is applied. Confirm supplier rates and
+                scope before quoting in Smart Glazier.
               </div>
 
               <p
@@ -2211,16 +2720,15 @@ export default function Home() {
             </>
           )}
 
-          {/* ==================================== */}
-          {/* OFFICE FIT-OUT */}
-          {/* ==================================== */}
+          {/* ===================================== */}
+          {/* ALL FOUR ESTIMATING WORKSPACES */}
+          {/* ===================================== */}
 
-          {tab === 'estimate' && (
+          {isWorkspace(tab) && (
             <div className="workspace-columns">
-
               <div className="content-column">
 
-                {/* PROJECT INFORMATION */}
+                {/* PROJECT DETAILS */}
 
                 <section className="panel">
                   <div className="panel-heading">
@@ -2259,26 +2767,24 @@ export default function Home() {
                         | 'date'
                         | 'framingSystem'
                       ][]
-                    ).map(
-                      ([label, key]) => (
-                        <Field
-                          key={key}
-                          label={label}
-                        >
-                          <Txt
-                            type={
-                              key === 'date'
-                                ? 'date'
-                                : 'text'
-                            }
-                            value={project[key]}
-                            onChange={v =>
-                              setInfo(key, v)
-                            }
-                          />
-                        </Field>
-                      )
-                    )}
+                    ).map(([label, key]) => (
+                      <Field
+                        key={key}
+                        label={label}
+                      >
+                        <Txt
+                          type={
+                            key === 'date'
+                              ? 'date'
+                              : 'text'
+                          }
+                          value={project[key]}
+                          onChange={v =>
+                            setInfo(key, v)
+                          }
+                        />
+                      </Field>
+                    ))}
 
                     <Field label="Frame Finish">
                       <select
@@ -2297,13 +2803,11 @@ export default function Home() {
                           'Black',
                           'Mill Finish',
                           'Custom / Other',
-                        ].map(
-                          x => (
-                            <option key={x}>
-                              {x}
-                            </option>
-                          )
-                        )}
+                        ].map(x => (
+                          <option key={x}>
+                            {x}
+                          </option>
+                        ))}
                       </select>
                     </Field>
                   </div>
@@ -2312,11 +2816,12 @@ export default function Home() {
                 {/* OPENING SCHEDULE */}
 
                 <section className="panel">
-
                   <div className="panel-heading">
                     <div>
                       <span className="section-label">
-                        02 / STOREFRONT TAKEOFF
+                        02 /{' '}
+                        {WORKSPACE_NAMES[workspace].toUpperCase()}
+                        {' '}TAKEOFF
                       </span>
 
                       <h2>
@@ -2335,527 +2840,613 @@ export default function Home() {
                   <p className="panel-subtitle">
                     Each opening has its own OPEX,
                     Gross Net Profit %, and full
-                    worksheet. When Calculated pricing
-                    is selected, the corresponding
-                    glass or framing rate appears
-                    automatically. You can customize
-                    these rates for each opening.
+                    worksheet for {WORKSPACE_NAMES[workspace]}.
+                    Select a glass specification and
+                    use the three-dot button to choose
+                    Annealed or Tempered. Unpriced
+                    specifications require a custom
+                    rate or manual glass cost.
                   </p>
 
-                  {project.openings.map(
-                    (o, i) => {
-                      const line =
-                        totals.lines.find(
-                          l =>
-                            l.opening.id === o.id
-                        );
+                  {project.openings.map((o, i) => {
+                    const line = totals.lines.find(
+                      l => l.opening.id === o.id
+                    );
 
-                      return (
-                        <div
-                          className="opening-card"
-                          key={o.id}
-                        >
+                    return (
+                      <div
+                        className="opening-card"
+                        key={o.id}
+                      >
+                        {/* OPENING HEADER */}
 
-                          {/* OPENING HEADING */}
+                        <div className="opening-heading">
+                          <div className="opening-identity">
+                            <span className="opening-index">
+                              {String(
+                                i + 1
+                              ).padStart(2, '0')}
+                            </span>
 
-                          <div className="opening-heading">
-                            <div className="opening-identity">
-                              <span className="opening-index">
-                                {String(
-                                  i + 1
-                                ).padStart(
-                                  2,
-                                  '0'
-                                )}
-                              </span>
+                            <strong>
+                              {o.mark}
+                            </strong>
 
-                              <strong>
-                                {o.mark}
-                              </strong>
-
-                              <span className="opening-category">
-                                {formatOpeningType(
-                                  o.openingType
-                                )}
-                              </span>
-                            </div>
-
-                            <button
-                              className="remove-btn"
-                              aria-label={
-                                `Remove ${o.mark}`
-                              }
-                              onClick={() => {
-                                if (
-                                  confirm(
-                                    `Remove ${o.mark}?`
-                                  )
-                                ) {
-                                  setProject(
-                                    old => ({
-                                      ...old,
-
-                                      openings:
-                                        old.openings.filter(
-                                          x =>
-                                            x.id !== o.id
-                                        ),
-                                    })
-                                  );
-                                }
-                              }}
-                            >
-                              ×
-                            </button>
+                            <span className="opening-category">
+                              {formatOpeningType(
+                                o.openingType
+                              )}
+                            </span>
                           </div>
 
-                          {/* OPENING INPUTS */}
+                          <button
+                            className="remove-btn"
+                            aria-label={
+                              `Remove ${o.mark}`
+                            }
+                            onClick={() => {
+                              if (
+                                confirm(
+                                  `Remove ${o.mark}?`
+                                )
+                              ) {
+                                setProject(old => ({
+                                  ...old,
 
-                          <div className="form-grid opening-grid">
+                                  openings:
+                                    old.openings.filter(
+                                      x =>
+                                        x.id !== o.id
+                                    ),
+                                }));
+                              }
+                            }}
+                          >
+                            ×
+                          </button>
+                        </div>
 
-                            <Field label="Opening mark">
-                              <Txt
-                                value={o.mark}
-                                onChange={v =>
-                                  setOpening(
-                                    o.id,
-                                    { mark: v }
-                                  )
-                                }
-                              />
-                            </Field>
+                        {/* OPENING INPUTS */}
 
-                            <Field label="Opening type">
+                        <div className="form-grid opening-grid">
+                          <Field label="Opening mark">
+                            <Txt
+                              value={o.mark}
+                              onChange={v =>
+                                setOpening(
+                                  o.id,
+                                  { mark: v }
+                                )
+                              }
+                            />
+                          </Field>
+
+                          <Field label="Opening type">
+                            <select
+                              className="input"
+                              value={o.openingType}
+                              onChange={e =>
+                                setOpening(o.id, {
+                                  openingType:
+                                    e.target.value as Opening['openingType'],
+                                })
+                              }
+                            >
+                              <option value="fixed">
+                                Fixed glazing
+                              </option>
+
+                              <option value="single-door">
+                                Single door
+                              </option>
+
+                              <option value="double-door">
+                                Double door
+                              </option>
+                            </select>
+                          </Field>
+
+                          <Field label="Width (inches)">
+                            <Txt
+                              value={o.width}
+                              onChange={v =>
+                                setOpening(
+                                  o.id,
+                                  { width: v }
+                                )
+                              }
+                            />
+                          </Field>
+
+                          <Field label="Height (inches)">
+                            <Txt
+                              value={o.height}
+                              onChange={v =>
+                                setOpening(
+                                  o.id,
+                                  { height: v }
+                                )
+                              }
+                            />
+                          </Field>
+
+                          <Field label="Quantity">
+                            <Num
+                              value={o.quantity}
+                              min={1}
+                              step={1}
+                              onChange={v =>
+                                setOpening(
+                                  o.id,
+                                  { quantity: v }
+                                )
+                              }
+                            />
+                          </Field>
+
+                          {/* GLASS SPECIFICATION */}
+
+                          <div
+                            className="field"
+                            style={{
+                              position: 'relative',
+                            }}
+                          >
+                            <span className="field-label">
+                              Glass Specification
+                            </span>
+
+                            <div
+                              style={{
+                                display: 'flex',
+                                gap: 6,
+                                alignItems: 'stretch',
+                              }}
+                            >
                               <select
                                 className="input"
-                                value={o.openingType}
-                                onChange={e =>
-                                  setOpening(
-                                    o.id,
-                                    {
-                                      openingType:
-                                        e.target.value as Opening['openingType'],
-                                    }
-                                  )
+                                aria-label={
+                                  `Glass Specification for ${o.mark}`
                                 }
+                                style={{
+                                  minWidth: 0,
+                                  flex: 1,
+                                }}
+                                value={o.glassSpecification}
+                                onChange={e => {
+                                  const spec =
+                                    e.target.value;
+
+                                  const legacy =
+                                    GLASS_TYPES.find(
+                                      g => g === spec
+                                    );
+
+                                  setOpening(o.id, {
+                                    glassSpecification: spec,
+
+                                    glassStyle:
+                                      /Tempered/i.test(spec)
+                                        ? 'Tempered'
+                                        : o.glassStyle,
+
+                                    ...(legacy
+                                      ? { glassType: legacy }
+                                      : {}),
+
+                                    glassRateOverride: null,
+                                  });
+                                }}
                               >
-                                <option value="fixed">
-                                  Fixed glazing
-                                </option>
-
-                                <option value="single-door">
-                                  Single door
-                                </option>
-
-                                <option value="double-door">
-                                  Double door
-                                </option>
-                              </select>
-                            </Field>
-
-                            <Field label="Width (inches)">
-                              <Txt
-                                value={o.width}
-                                onChange={v =>
-                                  setOpening(
-                                    o.id,
-                                    { width: v }
-                                  )
-                                }
-                              />
-                            </Field>
-
-                            <Field label="Height (inches)">
-                              <Txt
-                                value={o.height}
-                                onChange={v =>
-                                  setOpening(
-                                    o.id,
-                                    { height: v }
-                                  )
-                                }
-                              />
-                            </Field>
-
-                            <Field label="Quantity">
-                              <Num
-                                value={o.quantity}
-                                min={1}
-                                step={1}
-                                onChange={v =>
-                                  setOpening(
-                                    o.id,
-                                    { quantity: v }
-                                  )
-                                }
-                              />
-                            </Field>
-
-                            {/* GLASS TYPE */}
-
-                            <Field label="Glass type">
-                              <select
-                                className="input"
-                                value={o.glassType}
-                                onChange={e =>
-                                  setOpening(
-                                    o.id,
-                                    {
-                                      glassType:
-                                        e.target.value as Opening['glassType'],
-
-                                      // Reset glass rate so
-                                      // the newly selected
-                                      // type's rate applies.
-                                      glassRateOverride:
-                                        null,
+                                {!GLASS_OPTIONS.includes(
+                                  o.glassSpecification
+                                ) && (
+                                  <option
+                                    value={
+                                      o.glassSpecification
                                     }
-                                  )
-                                }
-                              >
-                                {GLASS_TYPES.map(
-                                  g => (
+                                  >
+                                    {o.glassSpecification}
+                                    {' '}(saved)
+                                  </option>
+                                )}
+
+                                {GLASS_OPTIONS.map(
+                                  spec => (
                                     <option
-                                      key={g}
-                                      value={g}
+                                      key={spec}
+                                      value={spec}
                                     >
-                                      {g}
+                                      {spec}
                                     </option>
                                   )
                                 )}
                               </select>
-                            </Field>
 
-                            <Field label="Glazing columns">
-                              <Num
-                                value={o.columns}
-                                min={1}
-                                step={1}
-                                onChange={v =>
-                                  setOpening(
-                                    o.id,
-                                    { columns: v }
+                              <button
+                                type="button"
+                                aria-label={
+                                  `Choose glass style for ${o.mark}`
+                                }
+                                aria-expanded={
+                                  styleMenuId === o.id
+                                }
+                                title="Annealed or Tempered"
+                                onClick={() =>
+                                  setStyleMenuId(
+                                    styleMenuId === o.id
+                                      ? null
+                                      : o.id
                                   )
                                 }
-                              />
-                            </Field>
-
-                            <Field label="Glazing rows">
-                              <Num
-                                value={o.rows}
-                                min={1}
-                                step={1}
-                                onChange={v =>
-                                  setOpening(
-                                    o.id,
-                                    { rows: v }
-                                  )
-                                }
-                              />
-                            </Field>
-
-                            {/* GLASS PRICING METHOD */}
-
-                            <Field label="Glass pricing method">
-                              <select
-                                className="input"
-                                value={o.glassMode}
-                                onChange={e =>
-                                  setOpening(
-                                    o.id,
-                                    {
-                                      glassMode:
-                                        e.target.value as Mode,
-                                    }
-                                  )
-                                }
+                                style={{
+                                  ...smallBtn,
+                                  minWidth: 45,
+                                  fontWeight: 800,
+                                }}
                               >
-                                <option value="calculated">
-                                  Calculated — SF × rate
-                                </option>
+                                ...
+                              </button>
+                            </div>
 
-                                <option value="manual">
-                                  Manual — cost per assembly
-                                </option>
-                              </select>
-                            </Field>
+                            <span className="field-hint">
+                              Glass Style:
+                              {' '}
+                              <strong>
+                                {o.glassStyle}
+                              </strong>
+                            </span>
 
-                            {/* MANUAL OR CALCULATED GLASS RATE */}
-
-                            {o.glassMode === 'manual' ? (
-                              <Field label="Manual glass cost $ / assembly">
-                                <Num
-                                  value={
-                                    o.manualGlassCostEach
-                                  }
-                                  onChange={v =>
-                                    setOpening(
-                                      o.id,
-                                      {
-                                        manualGlassCostEach:
-                                          v,
-                                      }
-                                    )
-                                  }
-                                />
-                              </Field>
-                            ) : (
-                              <RateInput
-                                label="Glass Rate $/SF"
-                                unit="SF"
-                                selected={o.glassType}
-                                defaultRate={
-                                  p.glassRates[
-                                    o.glassType
-                                  ]
-                                }
-                                override={
-                                  o.glassRateOverride
-                                }
-                                onChange={v =>
-                                  setOpening(
-                                    o.id,
-                                    {
-                                      glassRateOverride:
-                                        v,
-                                    }
-                                  )
-                                }
-                              />
-                            )}
-
-                            {/* HARDWARE PRICING METHOD */}
-
-                            <Field label="Hardware pricing method">
-                              <select
-                                className="input"
-                                value={o.hardwareMode}
-                                onChange={e =>
-                                  setOpening(
-                                    o.id,
-                                    {
-                                      hardwareMode:
-                                        e.target.value as Mode,
-                                    }
-                                  )
-                                }
+                            {styleMenuId === o.id && (
+                              <div
+                                style={{
+                                  position: 'absolute',
+                                  zIndex: 30,
+                                  top: '100%',
+                                  right: 0,
+                                  minWidth: 160,
+                                  background: '#fff',
+                                  borderRadius: 9,
+                                  padding: 6,
+                                  border:
+                                    '1px solid #d5e2e7',
+                                  boxShadow:
+                                    '0 8px 26px #10243a30',
+                                }}
                               >
-                                <option value="calculated">
-                                  Calculated — frame LF + accessories
-                                </option>
+                                {permittedStyles(
+                                  o.glassSpecification
+                                ).map(style => (
+                                  <button
+                                    key={style}
+                                    type="button"
+                                    onClick={() => {
+                                      setOpening(o.id, {
+                                        glassStyle: style,
 
-                                <option value="manual">
-                                  Manual — cost per assembly
-                                </option>
-                              </select>
-                            </Field>
+                                        glassRateOverride:
+                                          null,
+                                      });
 
-                            {/* MANUAL OR CALCULATED FRAMING RATE */}
+                                      setStyleMenuId(null);
+                                    }}
+                                    style={{
+                                      width: '100%',
+                                      textAlign: 'left',
+                                      padding:
+                                        '11px 12px',
+                                      border: 0,
+                                      borderRadius: 7,
+                                      cursor: 'pointer',
+                                      color: '#20384a',
 
-                            {o.hardwareMode === 'manual' ? (
-                              <Field label="Manual hardware cost $ / assembly">
-                                <Num
-                                  value={
-                                    o.manualHardwareCostEach
-                                  }
-                                  onChange={v =>
-                                    setOpening(
-                                      o.id,
-                                      {
-                                        manualHardwareCostEach:
-                                          v,
-                                      }
-                                    )
-                                  }
-                                />
-                              </Field>
-                            ) : (
-                              <>
-
-                                <RateInput
-                                  label="Framing Rate $/LF"
-                                  unit="LF"
-                                  selected={
-                                    project.framingSystem
-                                  }
-                                  defaultRate={
-                                    p.framingRatePerLF
-                                  }
-                                  override={
-                                    o.frameRateOverride
-                                  }
-                                  onChange={v =>
-                                    setOpening(
-                                      o.id,
-                                      {
-                                        frameRateOverride:
-                                          v,
-                                      }
-                                    )
-                                  }
-                                />
-
-                                <Field label="Additional hardware $ / assembly">
-                                  <Num
-                                    value={
-                                      o.hardwareAllowance
-                                    }
-                                    onChange={v =>
-                                      setOpening(
-                                        o.id,
-                                        {
-                                          hardwareAllowance:
-                                            v,
-                                        }
-                                      )
-                                    }
-                                  />
-                                </Field>
-
-                              </>
+                                      background:
+                                        o.glassStyle === style
+                                          ? '#e9f5f0'
+                                          : '#fff',
+                                    }}
+                                  >
+                                    {o.glassStyle === style
+                                      ? '✓ '
+                                      : ''}
+                                    {style}
+                                  </button>
+                                ))}
+                              </div>
                             )}
-
-                            {/* OPEX PER OPENING */}
-
-                            <Field label="OPEX / installation labor $ per assembly">
-                              <Num
-                                value={
-                                  o.opexPerAssembly
-                                }
-                                onChange={v =>
-                                  setOpening(
-                                    o.id,
-                                    {
-                                      opexPerAssembly:
-                                        v,
-                                    }
-                                  )
-                                }
-                              />
-                            </Field>
-
-                            {/* PROFIT PER OPENING */}
-
-                            <Field
-                              label="TARGET (GROSS) NET PROFIT %"
-                              hint="Enter your own percentage for this opening (below 100)."
-                            >
-                              <MarginInput
-                                value={
-                                  o.targetGrossNetPct
-                                }
-                                onChange={v =>
-                                  setOpening(
-                                    o.id,
-                                    {
-                                      targetGrossNetPct:
-                                        v,
-                                    }
-                                  )
-                                }
-                              />
-                            </Field>
                           </div>
 
-                          {/* OPENING NOTES */}
+                          {/* GLAZING DIVISIONS */}
 
+                          <Field label="Glazing columns">
+                            <Num
+                              value={o.columns}
+                              min={1}
+                              step={1}
+                              onChange={v =>
+                                setOpening(
+                                  o.id,
+                                  { columns: v }
+                                )
+                              }
+                            />
+                          </Field>
+
+                          <Field label="Glazing rows">
+                            <Num
+                              value={o.rows}
+                              min={1}
+                              step={1}
+                              onChange={v =>
+                                setOpening(
+                                  o.id,
+                                  { rows: v }
+                                )
+                              }
+                            />
+                          </Field>
+
+                          {/* GLASS PRICING */}
+
+                          <Field label="Glass pricing method">
+                            <select
+                              className="input"
+                              value={o.glassMode}
+                              onChange={e =>
+                                setOpening(o.id, {
+                                  glassMode:
+                                    e.target.value as Mode,
+                                })
+                              }
+                            >
+                              <option value="calculated">
+                                Calculated — SF × rate
+                              </option>
+
+                              <option value="manual">
+                                Manual — cost per assembly
+                              </option>
+                            </select>
+                          </Field>
+
+                          {o.glassMode === 'manual' ? (
+                            <Field label="Manual glass cost $ / assembly">
+                              <Num
+                                value={
+                                  o.manualGlassCostEach
+                                }
+                                onChange={v =>
+                                  setOpening(o.id, {
+                                    manualGlassCostEach:
+                                      v,
+                                  })
+                                }
+                              />
+                            </Field>
+                          ) : (
+                            <RateInput
+                              label="Glass Rate $/SF"
+                              unit="SF"
+                              selected={
+                                `${o.glassSpecification} · ${o.glassStyle}`
+                              }
+                              defaultRate={catalogRate(
+                                o.glassSpecification,
+                                o.glassStyle,
+                                p
+                              )}
+                              override={
+                                o.glassRateOverride
+                              }
+                              onChange={v =>
+                                setOpening(o.id, {
+                                  glassRateOverride:
+                                    v,
+                                })
+                              }
+                            />
+                          )}
+
+                          {/* HARDWARE PRICING */}
+
+                          <Field label="Hardware pricing method">
+                            <select
+                              className="input"
+                              value={o.hardwareMode}
+                              onChange={e =>
+                                setOpening(o.id, {
+                                  hardwareMode:
+                                    e.target.value as Mode,
+                                })
+                              }
+                            >
+                              <option value="calculated">
+                                Calculated — frame LF + accessories
+                              </option>
+
+                              <option value="manual">
+                                Manual — cost per assembly
+                              </option>
+                            </select>
+                          </Field>
+
+                          {o.hardwareMode === 'manual' ? (
+                            <Field label="Manual hardware cost $ / assembly">
+                              <Num
+                                value={
+                                  o.manualHardwareCostEach
+                                }
+                                onChange={v =>
+                                  setOpening(o.id, {
+                                    manualHardwareCostEach:
+                                      v,
+                                  })
+                                }
+                              />
+                            </Field>
+                          ) : (
+                            <>
+                              <RateInput
+                                label="Framing Rate $/LF"
+                                unit="LF"
+                                selected={
+                                  project.framingSystem
+                                }
+                                defaultRate={
+                                  p.framingRatePerLF
+                                }
+                                override={
+                                  o.frameRateOverride
+                                }
+                                onChange={v =>
+                                  setOpening(o.id, {
+                                    frameRateOverride:
+                                      v,
+                                  })
+                                }
+                              />
+
+                              <Field label="Additional hardware $ / assembly">
+                                <Num
+                                  value={
+                                    o.hardwareAllowance
+                                  }
+                                  onChange={v =>
+                                    setOpening(o.id, {
+                                      hardwareAllowance:
+                                        v,
+                                    })
+                                  }
+                                />
+                              </Field>
+                            </>
+                          )}
+
+                          {/* OPEX */}
+
+                          <Field label="OPEX / installation labor $ per assembly">
+                            <Num
+                              value={
+                                o.opexPerAssembly
+                              }
+                              onChange={v =>
+                                setOpening(o.id, {
+                                  opexPerAssembly:
+                                    v,
+                                })
+                              }
+                            />
+                          </Field>
+
+                          {/* PROFIT TARGET */}
+
+                          <Field
+                            label="TARGET (GROSS) NET PROFIT %"
+                            hint="Enter the target for this opening, below 100."
+                          >
+                            <MarginInput
+                              value={
+                                o.targetGrossNetPct
+                              }
+                              onChange={v =>
+                                setOpening(o.id, {
+                                  targetGrossNetPct:
+                                    v,
+                                })
+                              }
+                            />
+                          </Field>
+                        </div>
+
+                        {/* OPENING NOTES */}
+
+                        <div
+                          style={{
+                            padding:
+                              '0 18px 12px',
+                          }}
+                        >
+                          <Field label="Opening notes">
+                            <Txt
+                              value={o.note}
+                              onChange={v =>
+                                setOpening(
+                                  o.id,
+                                  { note: v }
+                                )
+                              }
+                            />
+                          </Field>
+                        </div>
+
+                        {/* OPENING RESULTS */}
+
+                        <div className="opening-result">
+                          <div>
+                            <span>Glass area</span>
+
+                            <strong>
+                              {line
+                                ? `${n4(line.glassSF)} SF`
+                                : '—'}
+                            </strong>
+                          </div>
+
+                          <div>
+                            <span>Frame length</span>
+
+                            <strong>
+                              {line
+                                ? `${n4(line.frameLF)} LF`
+                                : '—'}
+                            </strong>
+                          </div>
+
+                          <div>
+                            <span>Final Cost</span>
+
+                            <strong>
+                              {line
+                                ? currency(
+                                    line.totalCost
+                                  )
+                                : '—'}
+                            </strong>
+                          </div>
+                        </div>
+
+                        {/* COMPUTATION DROPDOWN */}
+
+                        {line && (
                           <div
                             style={{
                               padding:
-                                '0 18px 12px',
+                                '0 15px 12px',
                             }}
                           >
-                            <Field label="Opening notes">
-                              <Txt
-                                value={o.note}
-                                onChange={v =>
-                                  setOpening(
-                                    o.id,
-                                    { note: v }
-                                  )
-                                }
-                              />
-                            </Field>
-                          </div>
-
-                          {/* OPENING RESULTS */}
-
-                          <div className="opening-result">
-
-                            <div>
-                              <span>
-                                Glass area
-                              </span>
-
-                              <strong>
-                                {line
-                                  ? `${n4(line.glassSF)} SF`
-                                  : '—'}
-                              </strong>
-                            </div>
-
-                            <div>
-                              <span>
-                                Frame length
-                              </span>
-
-                              <strong>
-                                {line
-                                  ? `${n4(line.frameLF)} LF`
-                                  : '—'}
-                              </strong>
-                            </div>
-
-                            <div>
-                              <span>
-                                Final Cost
-                              </span>
-
-                              <strong>
-                                {line
-                                  ? currency(
-                                      line.totalCost
-                                    )
-                                  : '—'}
-                              </strong>
-                            </div>
-
-                          </div>
-
-                          {/* OPENING COMPUTATION */}
-
-                          {line && (
-                            <div
+                            <button
+                              className="btn btn-outline"
                               style={{
-                                padding:
-                                  '0 15px 12px',
+                                marginTop: 12,
                               }}
+                              onClick={() =>
+                                setSelectedOpeningId(
+                                  o.id
+                                )
+                              }
                             >
-                              <button
-                                className="btn btn-outline"
-                                style={{
-                                  marginTop: 12,
-                                }}
-                                onClick={() =>
-                                  setSelectedOpeningId(
-                                    o.id
-                                  )
-                                }
-                              >
-                                Review {o.mark} in summary →
-                              </button>
+                              Review {o.mark} in summary →
+                            </button>
 
-                              <OpeningFormula
-                                l={line}
-                                p={p}
-                              />
-                            </div>
-                          )}
-
-                        </div>
-                      );
-                    }
-                  )}
+                            <OpeningFormula
+                              l={line}
+                              p={p}
+                            />
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
 
                   <button
                     className="add-bottom"
@@ -2892,16 +3483,14 @@ export default function Home() {
                     }
                   />
                 </section>
-
               </div>
 
-              {/* ================================== */}
-              {/* SELECTED OPENING SUMMARY */}
-              {/* ================================== */}
+              {/* ================================= */}
+              {/* LIVE WORKSHEET */}
+              {/* ================================= */}
 
               <aside className="summary-column">
                 <section className="summary-card">
-
                   <div className="summary-header">
                     <div>
                       <span className="section-label light-label">
@@ -2916,7 +3505,7 @@ export default function Home() {
                     <span className="summary-indicator" />
                   </div>
 
-                  {/* SELECT OPENING */}
+                  {/* OPENING SELECTOR */}
 
                   <div
                     style={{
@@ -2987,7 +3576,7 @@ export default function Home() {
                     </small>
                   </div>
 
-                  {/* OPENING QUANTITIES */}
+                  {/* QUANTITIES */}
 
                   <div className="summary-stats">
                     <div>
@@ -3028,7 +3617,6 @@ export default function Home() {
 
                   {selected && (
                     <>
-
                       {/* GROSS NET PROFIT */}
 
                       <div
@@ -3065,14 +3653,13 @@ export default function Home() {
 
                         <small>
                           Enter any target from 0 to
-                          less than 100. No preset buttons.
+                          less than 100.
                         </small>
                       </div>
 
-                      {/* WORKSHEET VALUES */}
+                      {/* COST BREAKDOWN */}
 
                       <div className="summary-breakdown">
-
                         {(
                           [
                             [
@@ -3121,30 +3708,28 @@ export default function Home() {
                             string,
                             number | null
                           ][]
-                        ).map(
-                          ([label, v]) => (
-                            <div
-                              key={label}
-                              className={
-                                label === 'Total Cost'
-                                  ? 'summary-total'
-                                  : label === '(gross) Net'
-                                    ? 'summary-profit'
-                                    : ''
-                              }
-                            >
-                              <span>
-                                {label}
-                              </span>
+                        ).map(([label, v]) => (
+                          <div
+                            key={label}
+                            className={
+                              label === 'Total Cost'
+                                ? 'summary-total'
+                                : label === '(gross) Net'
+                                  ? 'summary-profit'
+                                  : ''
+                            }
+                          >
+                            <span>
+                              {label}
+                            </span>
 
-                              <strong>
-                                {v === null
-                                  ? 'Enter profit %'
-                                  : currency(v)}
-                              </strong>
-                            </div>
-                          )
-                        )}
+                            <strong>
+                              {v === null
+                                ? 'Enter profit %'
+                                : currency(v)}
+                            </strong>
+                          </div>
+                        ))}
 
                         <div className="summary-profit">
                           <span>
@@ -3175,7 +3760,6 @@ export default function Home() {
                           p={p}
                         />
                       </div>
-
                     </>
                   )}
 
@@ -3193,12 +3777,9 @@ export default function Home() {
                   >
                     Export Takeoff CSV ↗
                   </button>
-
                 </section>
 
-                {/* ================================= */}
                 {/* PROJECT TOTALS */}
-                {/* ================================= */}
 
                 <section
                   className="panel"
@@ -3215,7 +3796,6 @@ export default function Home() {
                   </h2>
 
                   <div className="pricing-totals">
-
                     <div className="stat">
                       <span className="stat-title">
                         Total Cost
@@ -3255,7 +3835,6 @@ export default function Home() {
                           : 'Set all margins'}
                       </strong>
                     </div>
-
                   </div>
 
                   <p
@@ -3269,265 +3848,748 @@ export default function Home() {
                     separately for every opening.
                   </p>
                 </section>
-
               </aside>
             </div>
           )}
 
-          {/* ==================================== */}
+          {/* ===================================== */}
           {/* PRICING & RATES */}
-          {/* ==================================== */}
+          {/* ===================================== */}
 
           {tab === 'pricing' && (
             <div className="pricing-layout">
-
               <div className="pricing-main">
 
-                {/* DEFAULT GLASS AND FRAMING RATES */}
+                {/* PRICING NAVIGATION */}
 
-                <section className="panel">
-                  <div className="panel-heading">
-                    <div>
-                      <span className="section-label">
-                        01 / BASE MATERIAL RATES
-                      </span>
+                <section
+                  className="panel"
+                  style={{
+                    paddingBottom: 18,
+                  }}
+                >
+                  <span className="section-label">
+                    PRICING &amp; RATES DIRECTORY
+                  </span>
 
-                      <h2>
-                        Glass & Framing
-                      </h2>
-                    </div>
-                  </div>
+                  <h2
+                    style={{
+                      marginBottom: 13,
+                    }}
+                  >
+                    Manage {WORKSPACE_NAMES[workspace]} Rates
+                  </h2>
 
                   <p className="panel-subtitle">
-                    These default rates automatically
-                    appear in calculated opening fields.
-                    Changing the selected glass type
-                    updates the corresponding glass
-                    rate. No waste allowance is added.
+                    Pricing here is saved with the
+                    current {WORKSPACE_NAMES[workspace]}
+                    {' '}estimate. Other workspaces
+                    retain their own rates.
                   </p>
 
-                  <div className="form-grid">
+                  <div
+                    style={{
+                      display: 'flex',
+                      flexWrap: 'wrap',
+                      gap: 8,
+                    }}
+                  >
+                    {(
+                      [
+                        ['glass', 'Glass Rates'],
+                        [
+                          'framing',
+                          'Framing & Door Packages',
+                        ],
+                        [
+                          'settings',
+                          'Worksheet Settings',
+                        ],
+                      ] as [
+                        PricingView,
+                        string
+                      ][]
+                    ).map(
+                      ([key, label]) => (
+                        <button
+                          key={key}
+                          type="button"
+                          onClick={() =>
+                            setPricingView(key)
+                          }
+                          aria-pressed={
+                            pricingView === key
+                          }
+                          className={
+                            pricingView === key
+                              ? 'btn btn-dark'
+                              : 'btn btn-outline'
+                          }
+                        >
+                          {label}
+                        </button>
+                      )
+                    )}
+                  </div>
+                </section>
 
-                    {GLASS_TYPES.map(
-                      g => (
+                {/* ================================= */}
+                {/* GLASS RATES */}
+                {/* ================================= */}
+
+                {pricingView === 'glass' && (
+                  <section className="panel">
+                    <div className="panel-heading">
+                      <div>
+                        <span className="section-label">
+                          01 / GLASS RATE CATALOG
+                        </span>
+
+                        <h2>
+                          Glass Rates ($/SF)
+                        </h2>
+                      </div>
+                    </div>
+
+                    <p className="panel-subtitle">
+                      All {GLASS_OPTIONS.length} glass
+                      specifications, grouped in
+                      collapsible sections.
+                      Enter Annealed or Tempered rates
+                      as applicable. Blank means not
+                      priced. Existing default rates
+                      remain available.
+                    </p>
+
+                    {/* SEARCH AND FILTER */}
+
+                    <div
+                      style={{
+                        display: 'flex',
+                        flexWrap: 'wrap',
+                        gap: 10,
+                        alignItems: 'end',
+                        marginBottom: 15,
+                      }}
+                    >
+                      <label
+                        className="field"
+                        style={{
+                          flex: '1 1 230px',
+                          minWidth: 180,
+                        }}
+                      >
+                        <span className="field-label">
+                          Find glass specification
+                        </span>
+
+                        <input
+                          className="input"
+                          type="search"
+                          placeholder="Search clear, laminated, satin, low iron..."
+                          value={glassSearch}
+                          onChange={e =>
+                            setGlassSearch(
+                              e.target.value
+                            )
+                          }
+                        />
+                      </label>
+
+                      <label
+                        className="field"
+                        style={{
+                          flex: '0 1 180px',
+                        }}
+                      >
+                        <span className="field-label">
+                          Show
+                        </span>
+
+                        <select
+                          className="input"
+                          value={rateFilter}
+                          onChange={e =>
+                            setRateFilter(
+                              e.target.value as RateFilter
+                            )
+                          }
+                        >
+                          <option value="all">
+                            All types
+                          </option>
+
+                          <option value="priced">
+                            With a rate
+                          </option>
+
+                          <option value="unpriced">
+                            Not fully priced
+                          </option>
+                        </select>
+                      </label>
+
+                      <button
+                        type="button"
+                        className="btn btn-outline"
+                        onClick={() => {
+                          setGlassSearch('');
+                          setRateFilter('all');
+
+                          setExpandedGroups(
+                            GLASS_GROUP_NAMES.slice()
+                          );
+                        }}
+                      >
+                        Expand all
+                      </button>
+
+                      <button
+                        type="button"
+                        className="btn btn-quiet"
+                        onClick={() => {
+                          setGlassSearch('');
+                          setRateFilter('all');
+                          setExpandedGroups([]);
+                        }}
+                      >
+                        Collapse all
+                      </button>
+                    </div>
+
+                    {/* COLLAPSIBLE GLASS GROUPS */}
+
+                    {GLASS_GROUPS.map(group => {
+                      const visible = group.specs.filter(
+                        spec => {
+                          if (
+                            !spec
+                              .toLowerCase()
+                              .includes(
+                                glassSearch
+                                  .trim()
+                                  .toLowerCase()
+                              )
+                          ) {
+                            return false;
+                          }
+
+                          const annealed = catalogRate(
+                            spec,
+                            'Annealed',
+                            p
+                          );
+
+                          const tempered = catalogRate(
+                            spec,
+                            'Tempered',
+                            p
+                          );
+
+                          const hasAny =
+                            annealed !== null ||
+                            tempered !== null;
+
+                          const fullyPriced =
+                            permittedStyles(spec).every(
+                              style =>
+                                catalogRate(
+                                  spec,
+                                  style,
+                                  p
+                                ) !== null
+                            );
+
+                          return rateFilter === 'priced'
+                            ? hasAny
+                            : rateFilter === 'unpriced'
+                              ? !fullyPriced
+                              : true;
+                        }
+                      );
+
+                      if (!visible.length) {
+                        return null;
+                      }
+
+                      const expanded =
+                        glassSearch.trim().length > 0 ||
+                        rateFilter !== 'all' ||
+                        expandedGroups.includes(
+                          group.name
+                        );
+
+                      const priced = group.specs.filter(
+                        spec =>
+                          catalogRate(
+                            spec,
+                            'Annealed',
+                            p
+                          ) !== null ||
+                          catalogRate(
+                            spec,
+                            'Tempered',
+                            p
+                          ) !== null
+                      ).length;
+
+                      return (
+                        <div
+                          key={group.name}
+                          style={{
+                            border:
+                              '1px solid #dce6ea',
+                            borderRadius: 10,
+                            marginBottom: 10,
+                            overflow: 'hidden',
+                            background: '#fff',
+                          }}
+                        >
+                          <button
+                            type="button"
+                            onClick={() =>
+                              toggleGroup(
+                                group.name
+                              )
+                            }
+                            style={{
+                              width: '100%',
+                              padding: '14px 15px',
+                              display: 'flex',
+                              alignItems: 'center',
+                              justifyContent:
+                                'space-between',
+                              gap: 10,
+                              border: 0,
+                              background: '#f5f9fa',
+                              color: '#142c43',
+                              cursor: 'pointer',
+                              textAlign: 'left',
+                            }}
+                          >
+                            <span
+                              style={{
+                                fontWeight: 750,
+                                fontSize: 13,
+                              }}
+                            >
+                              {expanded
+                                ? '▾'
+                                : '▸'}
+                              {'  '}
+                              {group.name}
+                            </span>
+
+                            <span
+                              style={{
+                                fontSize: 11,
+                                color: '#687f91',
+                              }}
+                            >
+                              {priced}/{group.specs.length}
+                              {' '}types priced
+                            </span>
+                          </button>
+
+                          {expanded && (
+                            <div
+                              style={{
+                                padding:
+                                  '6px 12px 12px',
+                              }}
+                            >
+                              <div
+                                style={{
+                                  display: 'grid',
+                                  gridTemplateColumns:
+                                    'minmax(140px,1fr) 104px 104px',
+                                  gap: 10,
+                                  padding: '10px 0',
+                                  color: '#5b7185',
+                                  fontWeight: 700,
+                                  fontSize: 11,
+                                  borderBottom:
+                                    '1px solid #e1e9ee',
+                                }}
+                              >
+                                <span>
+                                  Glass specification
+                                </span>
+
+                                <span>
+                                  Annealed $/SF
+                                </span>
+
+                                <span>
+                                  Tempered $/SF
+                                </span>
+                              </div>
+
+                              {visible.map(spec => (
+                                <div
+                                  key={spec}
+                                  style={{
+                                    display: 'grid',
+                                    gridTemplateColumns:
+                                      'minmax(140px,1fr) 104px 104px',
+                                    gap: 10,
+                                    padding: '8px 0',
+                                    alignItems: 'center',
+                                    borderBottom:
+                                      '1px solid #edf1f3',
+                                  }}
+                                >
+                                  <span
+                                    style={{
+                                      fontSize: 12,
+                                      overflowWrap:
+                                        'anywhere',
+                                      color: '#223c51',
+                                    }}
+                                  >
+                                    {spec}
+                                  </span>
+
+                                  {(
+                                    [
+                                      'Annealed',
+                                      'Tempered',
+                                    ] as GlassStyle[]
+                                  ).map(style => {
+                                    const rate =
+                                      catalogRate(
+                                        spec,
+                                        style,
+                                        p
+                                      );
+
+                                    const incompatible =
+                                      style === 'Annealed' &&
+                                      /Tempered/i.test(spec);
+
+                                    return (
+                                      <input
+                                        key={style}
+                                        type="number"
+                                        min="0"
+                                        step="0.01"
+                                        aria-label={
+                                          `${spec} ${style} rate per square foot`
+                                        }
+                                        className="input number-input"
+                                        disabled={
+                                          incompatible
+                                        }
+                                        style={{
+                                          width: '100%',
+                                          minWidth: 0,
+                                          padding:
+                                            '8px 7px',
+                                          fontSize: 12,
+                                          background:
+                                            incompatible
+                                              ? '#f1f4f5'
+                                              : '#fff',
+                                        }}
+                                        title={
+                                          incompatible
+                                            ? 'This specification is explicitly labeled Tempered.'
+                                            : 'Blank = not priced'
+                                        }
+                                        placeholder={
+                                          incompatible
+                                            ? 'N/A'
+                                            : '—'
+                                        }
+                                        value={
+                                          incompatible
+                                            ? ''
+                                            : rate ?? ''
+                                        }
+                                        onChange={e =>
+                                          setCatalogRate(
+                                            spec,
+                                            style,
+
+                                            e.target.value === ''
+                                              ? null
+                                              : Number(
+                                                  e.target.value
+                                                )
+                                          )
+                                        }
+                                      />
+                                    );
+                                  })}
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+
+                    <p
+                      className="panel-subtitle"
+                      style={{
+                        marginTop: 12,
+                      }}
+                    >
+                      Rates are saved with this estimate
+                      when you click Save Changes.
+                      Blank rates are not treated as
+                      $0.00. You can also override
+                      rates on individual openings.
+                    </p>
+                  </section>
+                )}
+
+                {/* ================================= */}
+                {/* FRAMING & DOOR PACKAGES */}
+                {/* ================================= */}
+
+                {pricingView === 'framing' && (
+                  <section className="panel">
+                    <div className="panel-heading">
+                      <div>
+                        <span className="section-label">
+                          02 / FRAMING &amp; DOOR PACKAGES
+                        </span>
+
+                        <h2>
+                          Framing and Hardware Rates
+                        </h2>
+                      </div>
+                    </div>
+
+                    <p className="panel-subtitle">
+                      These rates apply to the current
+                      {' '}{WORKSPACE_NAMES[workspace]}
+                      {' '}draft, independently of the
+                      Glass Rates catalog. Calculated
+                      hardware uses framing $/LF plus
+                      door package and accessory amounts.
+                    </p>
+
+                    <div className="form-grid">
+                      <Field label="Default aluminum framing $/LF">
+                        <Num
+                          value={
+                            p.framingRatePerLF
+                          }
+                          onChange={v =>
+                            setRule(
+                              'framingRatePerLF',
+                              v
+                            )
+                          }
+                        />
+                      </Field>
+
+                      <Field label="Single-door package $ / assembly">
+                        <Num
+                          value={
+                            p.singleDoorPackage
+                          }
+                          onChange={v =>
+                            setRule(
+                              'singleDoorPackage',
+                              v
+                            )
+                          }
+                        />
+                      </Field>
+
+                      <Field label="Double-door package $ / assembly">
+                        <Num
+                          value={
+                            p.doubleDoorPackage
+                          }
+                          onChange={v =>
+                            setRule(
+                              'doubleDoorPackage',
+                              v
+                            )
+                          }
+                        />
+                      </Field>
+                    </div>
+
+                    <div
+                      className="formula-panel"
+                      style={{
+                        marginTop: 20,
+                      }}
+                    >
+                      <strong>
+                        Calculated hardware cost
+                      </strong>
+
+                      <code>
+                        Framing LF × Framing Rate +
+                        Door Package + Accessories
+                      </code>
+
+                      <p>
+                        Opening-specific framing rates
+                        and accessories can be overridden
+                        within any workspace.
+                      </p>
+                    </div>
+                  </section>
+                )}
+
+                {/* ================================= */}
+                {/* WORKSHEET SETTINGS */}
+                {/* ================================= */}
+
+                {pricingView === 'settings' && (
+                  <>
+                    <section className="panel">
+                      <div className="panel-heading">
+                        <div>
+                          <span className="section-label">
+                            03 / WORKSHEET SETTINGS
+                          </span>
+
+                          <h2>
+                            Fees, Tax, Discounts &amp; Risk
+                          </h2>
+                        </div>
+                      </div>
+
+                      <div className="form-grid">
                         <Field
-                          key={g}
-                          label={`${g} — $/SF`}
+                          label="Fixed hardware fee $ / opening mark"
+                          hint="Added once per mark; default $15."
                         >
                           <Num
                             value={
-                              p.glassRates[g]
+                              p.hardwareFixedFee
                             }
                             onChange={v =>
                               setRule(
-                                'glassRates',
-                                {
-                                  ...p.glassRates,
-                                  [g]: v,
-                                }
+                                'hardwareFixedFee',
+                                v
                               )
                             }
                           />
                         </Field>
-                      )
-                    )}
 
-                    <Field label="Framing $/LF">
-                      <Num
-                        value={
-                          p.framingRatePerLF
+                        <Field label="Hardware tax %">
+                          <Num
+                            value={
+                              p.hardwareTaxPct
+                            }
+                            max={100}
+                            onChange={v =>
+                              setRule(
+                                'hardwareTaxPct',
+                                v
+                              )
+                            }
+                          />
+                        </Field>
+
+                        <Field label="Glass discount %">
+                          <Num
+                            value={
+                              p.glassDiscountPct
+                            }
+                            max={100}
+                            onChange={v =>
+                              setRule(
+                                'glassDiscountPct',
+                                v
+                              )
+                            }
+                          />
+                        </Field>
+
+                        <Field label="Risk % of discounted glass">
+                          <Num
+                            value={
+                              p.riskPct
+                            }
+                            max={100}
+                            onChange={v =>
+                              setRule(
+                                'riskPct',
+                                v
+                              )
+                            }
+                          />
+                        </Field>
+
+                        <Field label="CC surcharge %">
+                          <Num
+                            value={
+                              p.ccSurchargePct
+                            }
+                            max={100}
+                            onChange={v =>
+                              setRule(
+                                'ccSurchargePct',
+                                v
+                              )
+                            }
+                          />
+                        </Field>
+                      </div>
+                    </section>
+
+                    <section className="panel">
+                      <div className="panel-heading">
+                        <div>
+                          <span className="section-label">
+                            04 / PER-OPENING SETTINGS
+                          </span>
+
+                          <h2>
+                            OPEX &amp; Profit Targets
+                          </h2>
+                        </div>
+                      </div>
+
+                      <p className="panel-subtitle">
+                        Set OPEX and (gross) Net Profit %
+                        independently for each opening
+                        in the active workspace.
+                      </p>
+
+                      <div className="formula-panel">
+                        <strong>
+                          Per-opening calculation
+                        </strong>
+
+                        <code>
+                          Price = Total Cost ÷
+                          (1 − Gross Net Profit % / 100)
+                        </code>
+
+                        <p>
+                          Final Price = Price ×
+                          (1 + CC Surcharge % / 100).
+                        </p>
+                      </div>
+
+                      <button
+                        className="btn btn-dark"
+                        onClick={() =>
+                          goWorkspace(workspace)
                         }
-                        onChange={v =>
-                          setRule(
-                            'framingRatePerLF',
-                            v
-                          )
-                        }
-                      />
-                    </Field>
-
-                    <Field label="Single-door package $ / assembly">
-                      <Num
-                        value={
-                          p.singleDoorPackage
-                        }
-                        onChange={v =>
-                          setRule(
-                            'singleDoorPackage',
-                            v
-                          )
-                        }
-                      />
-                    </Field>
-
-                    <Field label="Double-door package $ / assembly">
-                      <Num
-                        value={
-                          p.doubleDoorPackage
-                        }
-                        onChange={v =>
-                          setRule(
-                            'doubleDoorPackage',
-                            v
-                          )
-                        }
-                      />
-                    </Field>
-
-                  </div>
-                </section>
-
-                {/* FEES, TAX AND DISCOUNTS */}
-
-                <section className="panel">
-                  <div className="panel-heading">
-                    <div>
-                      <span className="section-label">
-                        02 / WORKSHEET SETTINGS
-                      </span>
-
-                      <h2>
-                        Fees, Tax, Discount & Risk
-                      </h2>
-                    </div>
-                  </div>
-
-                  <div className="form-grid">
-
-                    <Field
-                      label="Fixed hardware fee $ / opening mark"
-                      hint="Added once per opening mark; default $15."
-                    >
-                      <Num
-                        value={
-                          p.hardwareFixedFee
-                        }
-                        onChange={v =>
-                          setRule(
-                            'hardwareFixedFee',
-                            v
-                          )
-                        }
-                      />
-                    </Field>
-
-                    <Field label="Hardware tax %">
-                      <Num
-                        value={
-                          p.hardwareTaxPct
-                        }
-                        max={100}
-                        onChange={v =>
-                          setRule(
-                            'hardwareTaxPct',
-                            v
-                          )
-                        }
-                      />
-                    </Field>
-
-                    <Field label="Glass discount %">
-                      <Num
-                        value={
-                          p.glassDiscountPct
-                        }
-                        max={100}
-                        onChange={v =>
-                          setRule(
-                            'glassDiscountPct',
-                            v
-                          )
-                        }
-                      />
-                    </Field>
-
-                    <Field label="Risk % of discounted glass">
-                      <Num
-                        value={p.riskPct}
-                        max={100}
-                        onChange={v =>
-                          setRule(
-                            'riskPct',
-                            v
-                          )
-                        }
-                      />
-                    </Field>
-
-                    <Field label="CC surcharge %">
-                      <Num
-                        value={
-                          p.ccSurchargePct
-                        }
-                        max={100}
-                        onChange={v =>
-                          setRule(
-                            'ccSurchargePct',
-                            v
-                          )
-                        }
-                      />
-                    </Field>
-
-                  </div>
-                </section>
-
-                {/* PER OPENING SETTINGS */}
-
-                <section className="panel">
-                  <div className="panel-heading">
-                    <div>
-                      <span className="section-label">
-                        03 / PER OPENING SETTINGS
-                      </span>
-
-                      <h2>
-                        OPEX and Profit Margin
-                      </h2>
-                    </div>
-                  </div>
-
-                  <p className="panel-subtitle">
-                    OPEX and (gross) Net Profit %
-                    are edited separately on each
-                    opening card under Office Fit-Out.
-                    There is no global profit percentage
-                    and no 20%, 30%, or 40% shortcut.
-                  </p>
-
-                  <div className="formula-panel">
-                    <strong>
-                      Price formula for every opening
-                    </strong>
-
-                    <code>
-                      Price = Opening Total Cost ÷
-                      (1 − Opening Gross Net Profit % / 100)
-                    </code>
-
-                    <p>
-                      Final Price = Price ×
-                      (1 + CC surcharge % / 100).
-                    </p>
-                  </div>
-
-                  <button
-                    className="btn btn-dark"
-                    onClick={() =>
-                      setTab('estimate')
-                    }
-                  >
-                    ← Set opening margins
-                  </button>
-                </section>
-
+                      >
+                        ← {WORKSPACE_NAMES[workspace]}
+                      </button>
+                    </section>
+                  </>
+                )}
               </div>
 
-              {/* PROJECT TOTALS */}
+              {/* PRICING PROJECT TOTALS */}
 
               <div className="pricing-side">
                 <section className="panel sticky-panel">
-
                   <span className="section-label">
                     LIVE PROJECT TOTALS
                   </span>
@@ -3537,7 +4599,6 @@ export default function Home() {
                   </h2>
 
                   <div className="pricing-totals">
-
                     <div className="stat">
                       <span className="stat-title">
                         Total Cost
@@ -3560,7 +4621,7 @@ export default function Home() {
                           ? currency(
                               totals.price
                             )
-                          : 'Set all margins'}
+                          : 'Set all rates and margins'}
                       </strong>
                     </div>
 
@@ -3574,7 +4635,7 @@ export default function Home() {
                           ? currency(
                               totals.finalPrice
                             )
-                          : 'Set all margins'}
+                          : 'Set all rates and margins'}
                       </strong>
                     </div>
 
@@ -3588,24 +4649,21 @@ export default function Home() {
                           ? currency(
                               totals.grossNet
                             )
-                          : 'Set all margins'}
+                          : 'Set all rates and margins'}
                       </strong>
                     </div>
-
                   </div>
                 </section>
               </div>
-
             </div>
           )}
 
-          {/* ==================================== */}
+          {/* ===================================== */}
           {/* SAVED ESTIMATES */}
-          {/* ==================================== */}
+          {/* ===================================== */}
 
           {tab === 'saved' && (
             <section className="panel">
-
               <div className="panel-heading">
                 <div>
                   <span className="section-label">
@@ -3613,13 +4671,11 @@ export default function Home() {
                   </span>
 
                   <h2>
-                    Saved Estimates (
-                    {library.length})
+                    Saved Estimates ({library.length})
                   </h2>
                 </div>
 
                 <div className="toolbar-actions">
-
                   <input
                     ref={libraryRef}
                     hidden
@@ -3647,16 +4703,51 @@ export default function Home() {
                   >
                     ↓ Backup All
                   </button>
-
                 </div>
               </div>
 
               <p className="panel-subtitle">
-                Projects are saved in your browser,
-                not a shared database. Back up
-                regularly before changing or clearing
-                browser data.
+                Saved projects from all four workspaces
+                appear here. Older estimates are filed
+                under Office Fit-Out.
+                Data is browser-local, not yet shared
+                across employees or computers.
               </p>
+
+              <label
+                className="field"
+                style={{
+                  maxWidth: 280,
+                  marginBottom: 14,
+                }}
+              >
+                <span className="field-label">
+                  Workspace category
+                </span>
+
+                <select
+                  className="input"
+                  value={savedFilter}
+                  onChange={e =>
+                    setSavedFilter(
+                      e.target.value as Workspace | 'all'
+                    )
+                  }
+                >
+                  <option value="all">
+                    All workspaces
+                  </option>
+
+                  {WORKSPACES.map(w => (
+                    <option
+                      key={w}
+                      value={w}
+                    >
+                      {WORKSPACE_NAMES[w]}
+                    </option>
+                  ))}
+                </select>
+              </label>
 
               <input
                 className="input"
@@ -3682,163 +4773,164 @@ export default function Home() {
                 <div
                   style={{
                     display: 'grid',
-
                     gridTemplateColumns:
                       'repeat(auto-fit,minmax(min(100%,300px),1fr))',
-
                     gap: 14,
                   }}
                 >
+                  {matches.map(item => {
+                    const s =
+                      calculate(item.project);
 
-                  {matches.map(
-                    item => {
-                      const s =
-                        calculate(
-                          item.project
-                        );
+                    return (
+                      <article
+                        key={item.id}
+                        style={{
+                          border:
+                            '1px solid #d9e5e6',
+                          padding: 16,
+                          borderRadius: 12,
+                          background: '#fff',
+                          display: 'grid',
+                          gap: 12,
+                        }}
+                      >
+                        <div>
+                          <span
+                            className="tag"
+                            style={{
+                              display: 'inline-block',
+                              marginBottom: 8,
+                            }}
+                          >
+                            {WORKSPACE_NAMES[
+                              item.workspace
+                            ]}
+                          </span>
 
-                      return (
-                        <article
-                          key={item.id}
+                          <strong
+                            style={{
+                              display: 'block',
+                            }}
+                          >
+                            {item.project.projectName ||
+                              'Untitled Project'}
+                          </strong>
+
+                          <p
+                            style={{
+                              fontSize: 12,
+                              color: '#65788a',
+                            }}
+                          >
+                            {item.project.estimateNumber}
+                            {' · '}
+                            {item.project.clientName}
+                          </p>
+                        </div>
+
+                        <small>
+                          Last saved:{' '}
+                          {new Date(
+                            item.updatedAt
+                          ).toLocaleString()}
+                        </small>
+
+                        <div
                           style={{
-                            border:
-                              '1px solid #d9e5e6',
-                            padding: 16,
-                            borderRadius: 12,
-                            background: '#fff',
-                            display: 'grid',
+                            display: 'flex',
+                            justifyContent:
+                              'space-between',
                             gap: 12,
                           }}
                         >
+                          <div>
+                            <small>
+                              Total Cost
+                            </small>
+
+                            <strong
+                              style={{
+                                display: 'block',
+                              }}
+                            >
+                              {currency(
+                                s.totalCost
+                              )}
+                            </strong>
+                          </div>
 
                           <div>
-                            <strong>
-                              {item.project.projectName ||
-                                'Untitled Project'}
+                            <small>
+                              Final Price
+                            </small>
+
+                            <strong
+                              style={{
+                                display: 'block',
+                                color: '#087459',
+                              }}
+                            >
+                              {s.complete
+                                ? currency(
+                                    s.finalPrice
+                                  )
+                                : 'Set margins'}
                             </strong>
-
-                            <p
-                              style={{
-                                fontSize: 12,
-                                color: '#65788a',
-                              }}
-                            >
-                              {item.project.estimateNumber}
-                              {' · '}
-                              {item.project.clientName}
-                            </p>
                           </div>
+                        </div>
 
-                          <small>
-                            Last saved:{' '}
-                            {new Date(
-                              item.updatedAt
-                            ).toLocaleString()}
-                          </small>
-
-                          <div
-                            style={{
-                              display: 'flex',
-                              justifyContent:
-                                'space-between',
-                              gap: 12,
-                            }}
+                        <div
+                          style={{
+                            display: 'flex',
+                            gap: 6,
+                            flexWrap: 'wrap',
+                          }}
+                        >
+                          <button
+                            className="btn btn-dark"
+                            onClick={() =>
+                              openSaved(item)
+                            }
                           >
+                            Open
+                          </button>
 
-                            <div>
-                              <small>
-                                Total Cost
-                              </small>
-
-                              <strong
-                                style={{
-                                  display: 'block',
-                                }}
-                              >
-                                {currency(
-                                  s.totalCost
-                                )}
-                              </strong>
-                            </div>
-
-                            <div>
-                              <small>
-                                Final Price
-                              </small>
-
-                              <strong
-                                style={{
-                                  display: 'block',
-                                  color: '#087459',
-                                }}
-                              >
-                                {s.complete
-                                  ? currency(
-                                      s.finalPrice
-                                    )
-                                  : 'Set margins'}
-                              </strong>
-                            </div>
-
-                          </div>
-
-                          <div
-                            style={{
-                              display: 'flex',
-                              gap: 6,
-                              flexWrap: 'wrap',
-                            }}
+                          <button
+                            style={smallBtn}
+                            onClick={() =>
+                              duplicate(item)
+                            }
                           >
+                            Duplicate
+                          </button>
 
-                            <button
-                              className="btn btn-dark"
-                              onClick={() =>
-                                openSaved(item)
-                              }
-                            >
-                              Open
-                            </button>
+                          <button
+                            style={smallBtn}
+                            onClick={() =>
+                              rename(item)
+                            }
+                          >
+                            Rename
+                          </button>
 
-                            <button
-                              style={smallBtn}
-                              onClick={() =>
-                                duplicate(item)
-                              }
-                            >
-                              Duplicate
-                            </button>
-
-                            <button
-                              style={smallBtn}
-                              onClick={() =>
-                                rename(item)
-                              }
-                            >
-                              Rename
-                            </button>
-
-                            <button
-                              style={{
-                                ...smallBtn,
-                                color: '#a22',
-                              }}
-                              onClick={() =>
-                                remove(item)
-                              }
-                            >
-                              Delete
-                            </button>
-
-                          </div>
-
-                        </article>
-                      );
-                    }
-                  )}
-
+                          <button
+                            style={{
+                              ...smallBtn,
+                              color: '#a22',
+                            }}
+                            onClick={() =>
+                              remove(item)
+                            }
+                          >
+                            Delete
+                          </button>
+                        </div>
+                      </article>
+                    );
+                  })}
                 </div>
               )}
-
             </section>
           )}
 
@@ -3846,7 +4938,7 @@ export default function Home() {
 
           <footer className="footer">
             <span>
-              Aspect Office Fit-Out · V1.6.2
+              Aspect Glasswork · Four Workspaces · V1.7.0
             </span>
 
             <span>
@@ -3854,7 +4946,6 @@ export default function Home() {
               Browser-local saved projects
             </span>
           </footer>
-
         </main>
       </div>
     </div>
