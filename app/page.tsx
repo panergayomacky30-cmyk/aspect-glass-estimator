@@ -21,7 +21,7 @@ import type {
   StorefrontOpening,
 } from '../lib/types';
 
-// ASPECT GLASSWORK ESTIMATING STUDIO V1.7.1
+// ASPECT GLASSWORK ESTIMATING STUDIO V1.7.3
 // Storefront-only framing and door model dropdowns.
 // Other workspaces and estimating logic are retained.
 
@@ -57,6 +57,21 @@ const WORKSPACE_PREFIX: Record<Workspace, string> = {
   'curtain-walls': 'CW',
   'office-fit-out': 'OF',
 };
+
+// Display labels for numbered estimating units. These affect only the UI.
+// Existing opening marks (SF-01, W-01, CW-01, OF-01) remain unchanged.
+const UNIT_NAMES: Record<Workspace, { one: string; many: string }> = {
+  storefront: { one: 'Storefront Unit', many: 'Storefront Units' },
+  windows: { one: 'Window Unit', many: 'Window Units' },
+  'curtain-walls': { one: 'Curtain Wall Unit', many: 'Curtain Wall Units' },
+  'office-fit-out': { one: 'Fit-Out Unit', many: 'Fit-Out Units' },
+};
+
+function unitScheduleTitle(workspace: Workspace, count: number): string {
+  return count === 1
+    ? `${UNIT_NAMES[workspace].one} 1`
+    : `${UNIT_NAMES[workspace].many} (${count})`;
+}
 
 const isWorkspace = (v: unknown): v is Workspace =>
   typeof v === 'string' &&
@@ -2767,7 +2782,7 @@ export default function Home() {
         <div className="topbar-right">
           <span className="top-pill">
             <span className="green-dot" />
-            Browser-based · V1.7.1
+            Browser-based · V1.7.3
           </span>
 
           <span className="autosave">
@@ -2839,7 +2854,7 @@ export default function Home() {
 
           <div className="sidebar-help">
             <strong>
-              Estimator V1.7.1
+              Estimator V1.7.3
             </strong>
 
             <p>
@@ -3274,8 +3289,7 @@ export default function Home() {
                       </span>
 
                       <h2>
-                        Openings (
-                        {project.openings.length})
+                        {unitScheduleTitle(workspace, project.openings.length)}
                       </h2>
                     </div>
 
@@ -3283,12 +3297,12 @@ export default function Home() {
                       className="btn btn-outline"
                       onClick={addOpening}
                     >
-                      + Add Opening
+                      + Add Unit
                     </button>
                   </div>
 
                   <p className="panel-subtitle">
-                    Each opening has its own
+                    Each unit has its own
                     OPEX, Gross Net Profit %,
                     glass specification,
                     and full cost worksheet.
@@ -3318,9 +3332,12 @@ export default function Home() {
                               ).padStart(2, '0')}
                             </span>
 
-                            <strong>{o.mark}</strong>
+                            <strong>
+                              {UNIT_NAMES[workspace].one} {i + 1}
+                            </strong>
 
                             <span className="opening-category">
+                              {o.mark} {' · '}
                               {formatOpeningType(
                                 o.openingType
                               )}
@@ -3912,7 +3929,7 @@ export default function Home() {
                     className="add-bottom"
                     onClick={addOpening}
                   >
-                    + Add Another Opening
+                    + Add Another {UNIT_NAMES[workspace].one}
                   </button>
                 </section>
 
@@ -5460,7 +5477,7 @@ export default function Home() {
 
           <footer className="footer">
             <span>
-              Aspect Glasswork · V1.7.1
+              Aspect Glasswork · V1.7.3
             </span>
 
             <span>
