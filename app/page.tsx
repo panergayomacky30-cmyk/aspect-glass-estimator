@@ -21,9 +21,9 @@ import type {
   StorefrontOpening,
 } from '../lib/types';
 
-// ASPECT GLASSWORK ESTIMATING STUDIO V1.7.3
-// Storefront-only framing and door model dropdowns.
-// Other workspaces and estimating logic are retained.
+// ASPECT GLASSWORK ESTIMATING STUDIO V1.7.5
+// Aspect blue and white visual theme, independent Pricing & Rates directories for all four workspaces.
+// Existing estimating formulas, saved projects and model dropdowns are retained.
 
 // =====================================================
 // WORKSPACES
@@ -1408,7 +1408,7 @@ function Detail({
     <div
       style={{
         padding: '10px 0',
-        borderBottom: '1px solid #dce7e2',
+        borderBottom: '1px solid #DAE8F3',
         display: 'flex',
         justifyContent: 'space-between',
         gap: 12,
@@ -1433,7 +1433,7 @@ function Detail({
 
       <strong
         style={{
-          color: '#087459',
+          color: '#1766A4',
           fontSize: 12,
           whiteSpace: 'nowrap',
           textAlign: 'right',
@@ -1597,8 +1597,8 @@ function OpeningFormula({
       style={{
         margin: '12px 0',
         padding: 14,
-        background: '#f7fbf9',
-        border: '1px solid #cbded6',
+        background: '#F6FAFE',
+        border: '1px solid #CADFED',
         borderRadius: 10,
         color: '#20384a',
       }}
@@ -1608,7 +1608,7 @@ function OpeningFormula({
           cursor: 'pointer',
           fontWeight: 700,
           fontSize: 12,
-          color: '#087459',
+          color: '#1766A4',
         }}
       >
         Show Computation — {o.mark}
@@ -1664,8 +1664,8 @@ function OpeningFormula({
 const smallBtn: CSSProperties = {
   padding: '8px 11px',
   borderRadius: 8,
-  border: '1px solid #d5e2e7',
-  color: '#183b54',
+  border: '1px solid #D7E5F1',
+  color: '#21496F',
   background: '#fff',
   cursor: 'pointer',
 };
@@ -2002,6 +2002,17 @@ export default function Home() {
     setNotice('');
   }
 
+  // Open one independent pricing directory without leaving Pricing & Rates.
+  // Every workspace has a separate draft and pricing object already.
+  function openPricingDirectory(next: Workspace) {
+    setWorkspace(next);
+    setTab('pricing');
+    setPricingView('glass');
+    setGlassSearch('');
+    setRateFilter('all');
+    setNotice('');
+  }
+
   function setInfo<
     K extends keyof Project
   >(
@@ -2303,9 +2314,12 @@ export default function Home() {
   function newEstimate() {
     if (!safeSwitch()) return;
 
-    setProject(
-      () => freshFor(workspace)
-    );
+    // Keep this workspace's directory rates when starting a new project.
+    // Other workspaces and existing saved estimates stay untouched.
+    setProject(old => ({
+      ...freshFor(workspace),
+      pricing: structuredClone(old.pricing),
+    }));
 
     setActiveIds(old => {
       const next = { ...old };
@@ -2782,7 +2796,7 @@ export default function Home() {
         <div className="topbar-right">
           <span className="top-pill">
             <span className="green-dot" />
-            Browser-based · V1.7.3
+            Browser-based · V1.7.5
           </span>
 
           <span className="autosave">
@@ -2837,6 +2851,39 @@ export default function Home() {
             ◫ Pricing &amp; Rates
           </button>
 
+          {tab === 'pricing' && (
+            <div
+              style={{
+                display: 'grid',
+                gap: 5,
+                padding: '6px 5px 13px 21px',
+              }}
+            >
+              {WORKSPACES.map(name => (
+                <button
+                  type="button"
+                  key={`pricing-sidebar-${name}`}
+                  aria-pressed={workspace === name}
+                  onClick={() => openPricingDirectory(name)}
+                  style={{
+                    border: '1px solid ' +
+                      (workspace === name ? '#A8CEE9' : 'transparent'),
+                    borderRadius: 8,
+                    background: workspace === name ? '#EDF6FE' : 'transparent',
+                    color: workspace === name ? '#1766A4' : '#476278',
+                    cursor: 'pointer',
+                    padding: '9px 10px',
+                    textAlign: 'left',
+                    fontSize: 12,
+                    fontWeight: workspace === name ? 700 : 500,
+                  }}
+                >
+                  ▸ {WORKSPACE_NAMES[name]} Rates
+                </button>
+              ))}
+            </div>
+          )}
+
           <button
             className={`navitem ${
               tab === 'saved'
@@ -2854,7 +2901,7 @@ export default function Home() {
 
           <div className="sidebar-help">
             <strong>
-              Estimator V1.7.3
+              Estimator V1.7.5
             </strong>
 
             <p>
@@ -2880,7 +2927,7 @@ export default function Home() {
 
               <h1>
                 {tab === 'pricing'
-                  ? 'Pricing & Cost Rules'
+                  ? 'Pricing & Rates Directories'
                   : tab === 'saved'
                     ? 'Saved Estimates'
                     : WORKSPACE_NAMES[tab]}
@@ -2891,7 +2938,7 @@ export default function Home() {
                 tab !== 'saved'
                   ? 'Set glass, hardware, OPEX and Gross Net Profit % for each opening separately.'
                   : tab === 'pricing'
-                    ? 'Organized glass rates, framing rates, and worksheet settings.'
+                    ? 'Four separate directories: Storefront, Windows, Curtain Walls, and Office Fit-Out.'
                     : 'Search and reopen your saved projects.'}
               </p>
             </div>
@@ -2952,9 +2999,18 @@ export default function Home() {
             ))}
           </div>
 
-          {/* WARNINGS */}
+          {/* PRICING DIRECTORY NOTE — NOT AN ESTIMATE VALIDATION */}
+          {tab === 'pricing' && (
+            <div className="sample-notice">
+              <strong>Four independent rate directories.</strong>{' '}
+              Choose Storefront, Windows, Curtain Walls, or Office Fit-Out
+              below. Rates autosave in this browser for the selected
+              workspace. Use Backup to preserve the project or its pricing.
+            </div>
+          )}
 
-          {tab !== 'saved' && (
+          {/* ESTIMATE VALIDATION IS SHOWN ONLY WHILE ESTIMATING */}
+          {isWorkspace(tab) && (
             <>
               <div className="sample-notice">
                 <strong>
@@ -3575,7 +3631,7 @@ export default function Home() {
                                   borderRadius: 9,
                                   padding: 6,
                                   border:
-                                    '1px solid #d5e2e7',
+                                    '1px solid #D7E5F1',
                                   boxShadow:
                                     '0 8px 26px #10243a30',
                                 }}
@@ -3607,7 +3663,7 @@ export default function Home() {
 
                                       background:
                                         o.glassStyle === style
-                                          ? '#e9f5f0'
+                                          ? '#EDF6FE'
                                           : '#fff',
                                     }}
                                   >
@@ -4139,8 +4195,8 @@ export default function Home() {
                           margin: '12px',
                           padding: 12,
                           borderRadius: 9,
-                          background: '#edf7f3',
-                          color: '#173d34',
+                          background: '#ECF5FD',
+                          color: '#1A4567',
                         }}
                       >
                         <Field
@@ -4364,7 +4420,80 @@ export default function Home() {
           {/* ===================================== */}
 
           {tab === 'pricing' && (
-            <div className="pricing-layout">
+            <>
+              {/* Separate workspace directories; each uses its own rates. */}
+              <section className="panel" style={{ marginBottom: 16 }}>
+                <div className="panel-heading">
+                  <div>
+                    <span className="section-label">
+                      01 / PRICING &amp; RATES DIRECTORIES
+                    </span>
+                    <h2>Choose a Workspace Directory</h2>
+                  </div>
+                  <span className="tag">4 independent directories</span>
+                </div>
+                <p className="panel-subtitle">
+                  Storefront, Windows, Curtain Walls, and Office Fit-Out each
+                  have their own glass rates, framing and door rates, and
+                  worksheet settings. Select a directory to edit its rates.
+                  Rates in the other directories do not change.
+                </p>
+                <div
+                  style={{
+                    display: 'grid',
+                    gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 205px), 1fr))',
+                    gap: 12,
+                    marginTop: 16,
+                  }}
+                >
+                  {WORKSPACES.map(name => {
+                    const isSelected = name === workspace;
+                    const rates = drafts[name].pricing;
+                    const pricedCount = GLASS_OPTIONS.filter(spec =>
+                      permittedStyles(spec).some(style =>
+                        catalogRate(spec, style, rates) !== null
+                      )
+                    ).length;
+                    return (
+                      <button
+                        key={`pricing-directory-${name}`}
+                        type="button"
+                        onClick={() => openPricingDirectory(name)}
+                        aria-pressed={isSelected}
+                        style={{
+                          textAlign: 'left',
+                          cursor: 'pointer',
+                          padding: '16px',
+                          borderRadius: 12,
+                          background: isSelected ? '#EBF5FE' : '#fff',
+                          border: isSelected
+                            ? '2px solid #237FBE'
+                            : '1px solid #D5E4EF',
+                          display: 'grid',
+                          gap: 9,
+                          color: '#173653',
+                          minHeight: 152,
+                        }}
+                      >
+                        <span style={{ color: isSelected ? '#1766A4' : '#708397', fontSize: 20 }}>
+                          {isSelected ? '▣' : '▤'}
+                        </span>
+                        <strong style={{ fontSize: 15 }}>
+                          {WORKSPACE_NAMES[name]}
+                        </strong>
+                        <span style={{ color: '#657d8d', fontSize: 11 }}>
+                          {pricedCount} glass types with rates
+                        </span>
+                        <span style={{ color: isSelected ? '#1766A4' : '#657d8d', fontSize: 11, fontWeight: 700 }}>
+                          {isSelected ? '✓ Current directory' : 'Open directory →'}
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </section>
+
+              <div className="pricing-layout">
               <div className="pricing-main">
 
                 {/* PRICING NAVIGATION */}
@@ -4376,7 +4505,7 @@ export default function Home() {
                   }}
                 >
                   <span className="section-label">
-                    PRICING &amp; RATES DIRECTORY
+                    02 / SELECTED WORKSPACE DIRECTORY
                   </span>
 
                   <h2
@@ -4384,17 +4513,17 @@ export default function Home() {
                       marginBottom: 13,
                     }}
                   >
-                    Manage {WORKSPACE_NAMES[workspace]} Rates
+                    {WORKSPACE_NAMES[workspace]} — Pricing &amp; Rates
                   </h2>
 
                   <p className="panel-subtitle">
-                    Pricing is saved with the current
-                    {` ${WORKSPACE_NAMES[workspace]} `}
-                    estimate. Other workspaces
-                    retain their own rates.
-                    Selecting a framing or door model
-                    does not automatically change
-                    these rates.
+                    You are editing the {WORKSPACE_NAMES[workspace]}
+                    pricing directory. Changes are saved with this workspace's
+                    draft, and new estimates in this workspace inherit its
+                    current rates. Other workspace directories and previously
+                    saved project snapshots remain unchanged.
+                    Selecting a framing or door model does not automatically
+                    change these rates.
                   </p>
 
                   <div
@@ -4648,7 +4777,7 @@ export default function Home() {
                           key={group.name}
                           style={{
                             border:
-                              '1px solid #dce6ea',
+                              '1px solid #DAE6F1',
                             borderRadius: 10,
                             marginBottom: 10,
                             overflow: 'hidden',
@@ -4671,7 +4800,7 @@ export default function Home() {
                                 'space-between',
                               gap: 10,
                               border: 0,
-                              background: '#f5f9fa',
+                              background: '#F6F9FD',
                               color: '#142c43',
                               cursor: 'pointer',
                               textAlign: 'left',
@@ -4758,7 +4887,7 @@ export default function Home() {
                                       fontSize: 12,
                                       overflowWrap:
                                         'anywhere',
-                                      color: '#223c51',
+                                      color: '#1A3857',
                                     }}
                                   >
                                     {spec}
@@ -5174,6 +5303,7 @@ export default function Home() {
                 </section>
               </div>
             </div>
+            </>
           )}
 
           {/* ===================================== */}
@@ -5407,7 +5537,7 @@ export default function Home() {
                             <strong
                               style={{
                                 display: 'block',
-                                color: '#087459',
+                                color: '#1766A4',
                               }}
                             >
                               {s.complete
@@ -5477,7 +5607,7 @@ export default function Home() {
 
           <footer className="footer">
             <span>
-              Aspect Glasswork · V1.7.3
+              Aspect Glasswork · V1.7.5
             </span>
 
             <span>
