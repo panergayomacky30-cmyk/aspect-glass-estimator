@@ -21,9 +21,13 @@ import type {
   StorefrontOpening,
 } from '../lib/types';
 
-// ASPECT GLASSWORK ESTIMATING STUDIO V1.7.0
-// Storefront, Windows, Curtain Walls, Office Fit-Out.
-// One worksheet and profit target per opening.
+// ASPECT GLASSWORK ESTIMATING STUDIO V1.7.1
+// Storefront-only framing and door model dropdowns.
+// Other workspaces and estimating logic are retained.
+
+// =====================================================
+// WORKSPACES
+// =====================================================
 
 const WORKSPACES = [
   'storefront',
@@ -54,12 +58,101 @@ const WORKSPACE_PREFIX: Record<Workspace, string> = {
   'office-fit-out': 'OF',
 };
 
-function isWorkspace(value: unknown): value is Workspace {
-  return (
-    typeof value === 'string' &&
-    WORKSPACES.some(w => w === value)
-  );
-}
+const isWorkspace = (v: unknown): v is Workspace =>
+  typeof v === 'string' &&
+  WORKSPACES.some(w => w === v);
+
+// =====================================================
+// STOREFRONT FRAMING SYSTEMS
+// NEW — STOREFRONT ONLY
+// =====================================================
+
+const STOREFRONT_FRAMES = [
+  {
+    name:
+      'FG450 / GAMCO, 1-3/4" × 4-1/2" NON-THERMAL BREAK MATERIAL',
+    description:
+      'GAMCO flush-glazed storefront system. The supplied reference describes a 2" × 4-1/2" system. Confirm the specified profile against the manufacturer submittal.',
+  },
+  {
+    name:
+      'FG451 / GAMCO, 2" × 4-1/2" NON-THERMAL BREAK MATERIAL',
+    description:
+      'GAMCO storefront frame series designed to integrate entrance doors into a flush-glazed storefront system.',
+  },
+  {
+    name:
+      'REBCO, 1-3/4" × 4-1/2" FRAMING',
+    description:
+      'Standard architectural storefront aluminum extrusion featuring a 1-3/4" sightline face width and 4-1/2" deep profile, used across fixed frames, transoms, sidelites, and entrance assemblies.',
+  },
+  {
+    name:
+      'REBCO, 2" × 4-1/2" FRAMING (FLUSH GLAZED / TALL BEAD)',
+    description:
+      'Architectural storefront aluminum extrusion featuring a 2" sightline face width and 4-1/2" deep profile, with recessed pockets for flush glazing or tall glazing stops for 1" insulated glass.',
+  },
+] as const;
+
+// =====================================================
+// STOREFRONT DOOR MODELS
+// NEW — STOREFRONT ONLY
+// =====================================================
+
+const STOREFRONT_DOORS = [
+  {
+    name: 'D500 / GAMCO WIDE STILE DOOR',
+    description:
+      'GAMCO heavy-duty wide-stile commercial aluminum door designed for high-traffic or heavy-use applications.',
+  },
+  {
+    name: 'D350 / GAMCO MEDIUM STILE DOOR',
+    description:
+      'GAMCO medium-stile commercial door featuring narrower, streamlined vertical stiles than the heavy-duty D500 model for a higher glass-to-metal ratio.',
+  },
+  {
+    name: 'D200 / GAMCO NARROW STILE DOOR',
+    description:
+      'Commercial narrow-stile aluminum entrance door designed for light-to-moderate pedestrian traffic and maximum glass visibility.',
+  },
+  {
+    name:
+      'BD3000 — OUT SWING BALCONY DOOR, 3-1/4" THERMAL BREAK PROFILE',
+    description:
+      'High-performance terrace or balcony door system designed to swing outward, featuring a 3-1/4" deep aluminum profile with an integrated thermal break for improved energy performance.',
+  },
+  {
+    name: 'SERIES N / REBCO NARROW STILE DOOR',
+    description:
+      'Commercial narrow-stile aluminum entrance door for light-to-moderate pedestrian traffic, featuring triple-reinforced welded corner construction and preparation for 1/4" or 1" insulated glass.',
+  },
+  {
+    name: 'SERIES M / REBCO MEDIUM STILE DOOR',
+    description:
+      'REBCO medium-stile commercial door with wider 3-1/2" vertical stiles for balanced structural strength and visibility. Available with bottom kick rails and optional intermediate rails.',
+  },
+  {
+    name: 'REBCO, 1" HALF BRONZE STUCCO PANEL DOOR',
+    description:
+      'Commercial medium-stile entrance door with a 2" intermediate horizontal rail, upper glazed section prepared for 1" insulated glass, and lower insulated aluminum stucco-textured panel.',
+  },
+  {
+    name: 'SERIES W / REBCO WIDE STILE DOOR',
+    description:
+      'Heavy-duty commercial entrance door featuring 5" wide vertical stiles designed for high-impact pedestrian traffic.',
+  },
+  {
+    name:
+      'REBCO FRP (FIBERGLASS REINFORCED POLYESTER) DOOR',
+    description:
+      'Heavy-duty commercial or institutional entrance door with scratch- and dent-resistant FRP face sheets, aluminum subframe, and insulated core.',
+  },
+  {
+    name: 'REBCO FLUSH & PANEL DOORS',
+    description:
+      'Commercial aluminum doors available in insulated full-flush construction or partial aluminum panel configurations for privacy, security, and sound insulation.',
+  },
+] as const;
 
 // =====================================================
 // GLASS SPECIFICATIONS
@@ -156,7 +249,11 @@ function groupOf(spec: string): GlassGroup {
     return 'Laminated & Acoustic';
   }
 
-  if (/Mirror|Printed|White Print|Back Painted|Alice|055/i.test(spec)) {
+  if (
+    /Mirror|Printed|White Print|Back Painted|Alice|055/i.test(
+      spec
+    )
+  ) {
     return 'Decorative, Mirror & Printed';
   }
 
@@ -177,13 +274,19 @@ function groupOf(spec: string): GlassGroup {
 
 const GLASS_GROUPS = GLASS_GROUP_NAMES.map(name => ({
   name,
-  specs: GLASS_OPTIONS.filter(spec => groupOf(spec) === name),
+  specs: GLASS_OPTIONS.filter(
+    spec => groupOf(spec) === name
+  ),
 }));
 
-const glassKey = (spec: string, style: GlassStyle) =>
-  `${spec}::${style}`;
+const glassKey = (
+  spec: string,
+  style: GlassStyle
+) => `${spec}::${style}`;
 
-const permittedStyles = (spec: string): GlassStyle[] =>
+const permittedStyles = (
+  spec: string
+): GlassStyle[] =>
   /Tempered/i.test(spec)
     ? ['Tempered']
     : ['Annealed', 'Tempered'];
@@ -192,24 +295,27 @@ function priceCategory(
   spec: string,
   style: GlassStyle
 ): LegacyGlassType | null {
-  if (spec === '1/2" Clear' && style === 'Tempered') {
+  if (
+    spec === '1/2" Clear' &&
+    style === 'Tempered'
+  ) {
     return '1/2" Clear Tempered';
   }
 
-  if (spec === '1/4" Clear' && style === 'Tempered') {
+  if (
+    spec === '1/4" Clear' &&
+    style === 'Tempered'
+  ) {
     return '1/4" Clear Tempered';
   }
 
-  if (GLASS_TYPES.includes(spec as LegacyGlassType)) {
+  if (
+    GLASS_TYPES.includes(
+      spec as LegacyGlassType
+    )
+  ) {
     if (
-      spec.includes('Tempered') &&
-      style !== 'Tempered'
-    ) {
-      return null;
-    }
-
-    if (
-      spec.includes('Insulated') &&
+      /Tempered|Insulated/i.test(spec) &&
       style !== 'Tempered'
     ) {
       return null;
@@ -222,7 +328,7 @@ function priceCategory(
 }
 
 // =====================================================
-// TYPES
+// DATA TYPES
 // =====================================================
 
 type Opening = StorefrontOpening & {
@@ -251,6 +357,9 @@ type Project = Omit<
 > & {
   openings: Opening[];
   pricing: Rules;
+
+  // NEW — Saved on Storefront projects
+  storefrontDoorModel: string;
 };
 
 type Saved = {
@@ -305,12 +414,17 @@ type Totals = {
 };
 
 // =====================================================
-// STORAGE
+// STORAGE KEYS
 // =====================================================
 
-const DRAFT_KEY = 'aspect-storefront-estimator-v1';
-const LIBRARY_KEY = 'aspect-storefront-estimator-library-v1';
-const ACTIVE_KEY = 'aspect-storefront-estimator-active-v1';
+const DRAFT_KEY =
+  'aspect-storefront-estimator-v1';
+
+const LIBRARY_KEY =
+  'aspect-storefront-estimator-library-v1';
+
+const ACTIVE_KEY =
+  'aspect-storefront-estimator-active-v1';
 
 const WORKSPACE_DRAFTS_KEY =
   'aspect-estimator-workspace-drafts-v1';
@@ -324,11 +438,13 @@ const CURRENT_WORKSPACE_KEY =
 const n4 = (n: number) => decimal(n, 4);
 const pct = (n: number) => decimal(n, 2);
 
-const obj = (v: unknown): Record<string, unknown> =>
+const obj = (
+  v: unknown
+): Record<string, unknown> =>
   v !== null &&
   typeof v === 'object' &&
   !Array.isArray(v)
-    ? v as Record<string, unknown>
+    ? (v as Record<string, unknown>)
     : {};
 
 const nonneg = (
@@ -341,7 +457,9 @@ const nonneg = (
     ? v
     : fallback;
 
-const isMargin = (v: unknown): v is number =>
+const isMargin = (
+  v: unknown
+): v is number =>
   typeof v === 'number' &&
   Number.isFinite(v) &&
   v >= 0 &&
@@ -349,8 +467,22 @@ const isMargin = (v: unknown): v is number =>
 
 const id = () => crypto.randomUUID();
 
-const clone = (p: Project): Project =>
-  structuredClone(p);
+const clone = (
+  p: Project
+): Project => structuredClone(p);
+
+function modelDescription(
+  items: readonly {
+    name: string;
+    description: string;
+  }[],
+  key: string
+) {
+  return (
+    items.find(x => x.name === key)
+      ?.description ?? ''
+  );
+}
 
 // =====================================================
 // GLASS RATE LOOKUP
@@ -372,7 +504,10 @@ function catalogRate(
     return p.glassSpecRates[key];
   }
 
-  const linked = priceCategory(spec, style);
+  const linked = priceCategory(
+    spec,
+    style
+  );
 
   return linked === null
     ? null
@@ -383,7 +518,9 @@ function catalogRate(
 // PROJECT NORMALIZATION
 // =====================================================
 
-function normalizeAppProject(value: unknown): Project | null {
+function normalizeAppProject(
+  value: unknown
+): Project | null {
   const base = normalizeProject(value);
 
   if (!base) return null;
@@ -396,7 +533,8 @@ function normalizeAppProject(value: unknown): Project | null {
     : [];
 
   const totalQty = base.openings.reduce(
-    (s, o) => s + Math.max(1, o.quantity),
+    (s, o) =>
+      s + Math.max(1, o.quantity),
     0
   );
 
@@ -404,7 +542,9 @@ function normalizeAppProject(value: unknown): Project | null {
     ? nonneg(rp.opex) / totalQty
     : 0;
 
-  const legacyMargin = isMargin(rp.targetGrossNetPct)
+  const legacyMargin = isMargin(
+    rp.targetGrossNetPct
+  )
     ? rp.targetGrossNetPct
     : typeof rp.profitMarkupPct === 'number' &&
       rp.profitMarkupPct >= 0
@@ -414,6 +554,11 @@ function normalizeAppProject(value: unknown): Project | null {
 
   return {
     ...base,
+
+    storefrontDoorModel:
+      typeof raw.storefrontDoorModel === 'string'
+        ? raw.storefrontDoorModel
+        : '',
 
     openings: base.openings.map((o, i) => {
       const r = obj(originals[i]);
@@ -498,7 +643,10 @@ function normalizeAppProject(value: unknown): Project | null {
         17
       ),
 
-      riskPct: nonneg(rp.riskPct, 10),
+      riskPct: nonneg(
+        rp.riskPct,
+        10
+      ),
 
       ccSurchargePct: nonneg(
         rp.ccSurchargePct,
@@ -509,49 +657,18 @@ function normalizeAppProject(value: unknown): Project | null {
 }
 
 // =====================================================
-// NEW WORKSPACE PROJECTS
+// NEW PROJECTS
 // =====================================================
 
 function fresh(): Project {
-  return normalizeAppProject(newProject()) as Project;
-}
-
-function freshFor(workspace: Workspace): Project {
-  const project = fresh();
-
-  if (workspace === 'office-fit-out') {
-    return project;
-  }
-
-  project.projectName =
-    `New ${WORKSPACE_NAMES[workspace]} Project`;
-
-  project.estimateNumber = '';
-  project.openings = [freshOpening(1, workspace)];
-  project.scopeNotes = '';
-
-  project.framingSystem =
-    workspace === 'windows'
-      ? 'Aluminum window framing'
-      : workspace === 'curtain-walls'
-        ? 'Aluminum curtain wall framing'
-        : 'Aluminum storefront framing';
-
-  return project;
-}
-
-function newDrafts(): Record<Workspace, Project> {
-  return {
-    storefront: freshFor('storefront'),
-    windows: freshFor('windows'),
-    'curtain-walls': freshFor('curtain-walls'),
-    'office-fit-out': freshFor('office-fit-out'),
-  };
+  return normalizeAppProject(
+    newProject()
+  ) as Project;
 }
 
 function freshOpening(
   index: number,
-  workspace: Workspace = 'storefront'
+  workspace: Workspace
 ): Opening {
   const base = newOpening(index);
 
@@ -579,11 +696,57 @@ function freshOpening(
   };
 }
 
+function freshFor(
+  workspace: Workspace
+): Project {
+  const project = fresh();
+
+  if (workspace === 'office-fit-out') {
+    return project;
+  }
+
+  project.projectName =
+    `New ${WORKSPACE_NAMES[workspace]} Project`;
+
+  project.estimateNumber = '';
+
+  project.openings = [
+    freshOpening(1, workspace),
+  ];
+
+  project.scopeNotes = '';
+
+  project.framingSystem =
+    workspace === 'storefront'
+      ? ''
+      : workspace === 'windows'
+        ? 'Aluminum window framing'
+        : 'Aluminum curtain wall framing';
+
+  project.storefrontDoorModel = '';
+
+  return project;
+}
+
+function newDrafts(): Record<
+  Workspace,
+  Project
+> {
+  return {
+    storefront: freshFor('storefront'),
+    windows: freshFor('windows'),
+    'curtain-walls': freshFor('curtain-walls'),
+    'office-fit-out': freshFor('office-fit-out'),
+  };
+}
+
 // =====================================================
-// CALCULATIONS
+// ESTIMATING CALCULATIONS
 // =====================================================
 
-function calculate(project: Project): Totals {
+function calculate(
+  project: Project
+): Totals {
   const p = project.pricing;
 
   const errors: string[] = [];
@@ -609,7 +772,8 @@ function calculate(project: Project): Totals {
     ['Double-door package', p.doubleDoorPackage],
 
     ...GLASS_TYPES.map(
-      g => [g, p.glassRates[g]] as [string, number]
+      g =>
+        [g, p.glassRates[g]] as [string, number]
     ),
   ];
 
@@ -641,9 +805,10 @@ function calculate(project: Project): Totals {
     }
   }
 
-  for (const [key, rate] of Object.entries(
-    p.glassSpecRates
-  )) {
+  for (
+    const [key, rate] of
+    Object.entries(p.glassSpecRates)
+  ) {
     if (
       rate !== null &&
       (
@@ -667,8 +832,12 @@ function calculate(project: Project): Totals {
       );
     }
 
-    if (marks.has(label.toUpperCase())) {
-      errors.push(`${label}: duplicate mark.`);
+    if (
+      marks.has(label.toUpperCase())
+    ) {
+      errors.push(
+        `${label}: duplicate mark.`
+      );
     }
 
     marks.add(label.toUpperCase());
@@ -680,6 +849,7 @@ function calculate(project: Project): Totals {
       errors.push(
         `${label}: enter valid width and height.`
       );
+
       continue;
     }
 
@@ -760,7 +930,9 @@ function calculate(project: Project): Totals {
       continue;
     }
 
-    if (!isMargin(o.targetGrossNetPct)) {
+    if (
+      !isMargin(o.targetGrossNetPct)
+    ) {
       errors.push(
         `${label}: enter a Gross Net Profit % from 0 to less than 100.`
       );
@@ -768,11 +940,11 @@ function calculate(project: Project): Totals {
 
     const qty = o.quantity;
 
-    // Glass area, no material allowance.
+    // Glass area — no material allowance
     const glassSF =
       w * h / 144 * qty;
 
-    // Simplified frame length.
+    // Simplified framing length
     const frameLF =
       (
         2 * (w + h) +
@@ -801,7 +973,6 @@ function calculate(project: Project): Totals {
             o.hardwareAllowance
           ) * qty;
 
-    // Fixed hardware fee is charged once per mark.
     const totalHardwareCost =
       (
         hardwareCost +
@@ -832,15 +1003,14 @@ function calculate(project: Project): Totals {
       opex +
       risk;
 
-    const price = isMargin(
-      o.targetGrossNetPct
-    )
-      ? totalCost /
-        (
-          1 -
-          o.targetGrossNetPct / 100
-        )
-      : null;
+    const price =
+      isMargin(o.targetGrossNetPct)
+        ? totalCost /
+          (
+            1 -
+            o.targetGrossNetPct / 100
+          )
+        : null;
 
     const ccSurcharge =
       price === null
@@ -905,7 +1075,8 @@ function calculate(project: Project): Totals {
     >
   ) =>
     lines.reduce(
-      (acc, line) => acc + line[key],
+      (acc, line) =>
+        acc + line[key],
       0
     );
 
@@ -963,7 +1134,7 @@ function calculate(project: Project): Totals {
 }
 
 // =====================================================
-// FILE EXPORT
+// DOWNLOAD AND EXPORT
 // =====================================================
 
 function download(
@@ -994,7 +1165,9 @@ const safeName = (s: string) =>
   s.replace(/[^a-z0-9_-]+/gi, '-')
     .slice(0, 64) || 'estimate';
 
-function csvCell(v: string | number) {
+function csvCell(
+  v: string | number
+) {
   let s = String(v);
 
   if (/^\s*[=+\-@]/.test(s)) {
@@ -1152,7 +1325,11 @@ function RateInput({
         type="number"
         min="0"
         step="0.01"
-        value={override ?? defaultRate ?? ''}
+        value={
+          override ??
+          defaultRate ??
+          ''
+        }
         placeholder={
           defaultRate === null
             ? 'Enter custom rate'
@@ -1179,21 +1356,22 @@ function RateInput({
           : 'Custom rate for this opening'}
       </span>
 
-      {!usingDefault && defaultRate !== null && (
-        <button
-          type="button"
-          className="btn btn-quiet"
-          style={{
-            alignSelf: 'flex-start',
-            marginTop: 5,
-          }}
-          onClick={() =>
-            onChange(null)
-          }
-        >
-          ↺ Use default {currency(defaultRate)}/{unit}
-        </button>
-      )}
+      {!usingDefault &&
+        defaultRate !== null && (
+          <button
+            type="button"
+            className="btn btn-quiet"
+            style={{
+              alignSelf: 'flex-start',
+              marginTop: 5,
+            }}
+            onClick={() =>
+              onChange(null)
+            }
+          >
+            ↺ Use default rate
+          </button>
+        )}
     </div>
   );
 }
@@ -1259,7 +1437,9 @@ function Worksheet({
   l: Line;
   p: Rules;
 }) {
-  const m = (v: number | null) =>
+  const m = (
+    v: number | null
+  ) =>
     v === null
       ? 'Enter profit %'
       : currency(v);
@@ -1294,8 +1474,14 @@ function Worksheet({
         title="Cost of Hardware"
         formula={
           o.hardwareMode === 'manual'
-            ? `${currency(o.manualHardwareCostEach)} per assembly × ${o.quantity}`
-            : `${n4(l.frameLF)} LF × ${currency(l.frameRate)}/LF + ${o.quantity} × (${currency(l.doorRate)} door + ${currency(o.hardwareAllowance)} extras)`
+            ? `${currency(
+                o.manualHardwareCostEach
+              )} per assembly × ${o.quantity}`
+            : `${n4(l.frameLF)} LF × ` +
+              `${currency(l.frameRate)}/LF + ` +
+              `${o.quantity} × (` +
+              `${currency(l.doorRate)} door + ` +
+              `${currency(o.hardwareAllowance)} extras)`
         }
         result={currency(l.hardwareCost)}
       />
@@ -1314,8 +1500,11 @@ function Worksheet({
         title="Cost of Glass"
         formula={
           o.glassMode === 'manual'
-            ? `${currency(o.manualGlassCostEach)} per assembly × ${o.quantity}`
-            : `${n4(l.glassSF)} SF × ${currency(l.glassRate)}/SF`
+            ? `${currency(
+                o.manualGlassCostEach
+              )} per assembly × ${o.quantity}`
+            : `${n4(l.glassSF)} SF × ` +
+              `${currency(l.glassRate)}/SF`
         }
         result={currency(l.glassCost)}
       />
@@ -1413,13 +1602,17 @@ function OpeningFormula({
       <p style={{ fontSize: 12 }}>
         <strong>Glass Specification:</strong>
         {' '}
-        {o.glassSpecification} · {o.glassStyle}
+        {o.glassSpecification}
+        {' · '}
+        {o.glassStyle}
       </p>
 
       <Detail
         title="Gross opening area"
         formula={
-          `(${n4(l.width)} × ${n4(l.height)} ÷ 144) × ${o.quantity}`
+          `(${n4(l.width)} × ` +
+          `${n4(l.height)} ÷ 144) × ` +
+          `${o.quantity}`
         }
         result={`${n4(l.glassSF)} SF`}
       />
@@ -1427,9 +1620,11 @@ function OpeningFormula({
       <Detail
         title="Framing length"
         formula={
-          `[2 × (${n4(l.width)} + ${n4(l.height)}) + ` +
+          `[2 × (${n4(l.width)} + ` +
+          `${n4(l.height)}) + ` +
           `(${o.columns} − 1) × ${n4(l.height)} + ` +
-          `(${o.rows} − 1) × ${n4(l.width)}] ÷ 12 × ${o.quantity}`
+          `(${o.rows} − 1) × ${n4(l.width)}] ÷ 12 × ` +
+          `${o.quantity}`
         }
         result={`${n4(l.frameLF)} LF`}
       />
@@ -1442,8 +1637,9 @@ function OpeningFormula({
           color: '#657987',
         }}
       >
-        Preliminary takeoff quantities. The fixed
-        hardware fee is charged once per mark.
+        Preliminary takeoff quantities.
+        The fixed hardware fee is charged
+        once per opening mark.
         No material waste allowance is added.
       </p>
     </details>
@@ -1564,37 +1760,19 @@ export default function Home() {
         ]
           .join(' ')
           .toLowerCase()
-          .includes(search.trim().toLowerCase())
+          .includes(
+            search.trim().toLowerCase()
+          )
     )
     .sort(
       (a, b) =>
-        b.updatedAt.localeCompare(a.updatedAt)
+        b.updatedAt.localeCompare(
+          a.updatedAt
+        )
     );
 
   // ==================================================
-  // WORKSPACE NAVIGATION
-  // ==================================================
-
-  function setProject(
-    fn: (old: Project) => Project
-  ) {
-    setDrafts(old => ({
-      ...old,
-      [workspace]: fn(old[workspace]),
-    }));
-  }
-
-  function goWorkspace(next: Workspace) {
-    setWorkspace(next);
-    setTab(next);
-
-    setSelectedOpeningId(null);
-    setStyleMenuId(null);
-    setNotice('');
-  }
-
-  // ==================================================
-  // LOAD SAVED DATA
+  // LOAD EXISTING SAVED DATA
   // ==================================================
 
   useEffect(() => {
@@ -1620,7 +1798,7 @@ export default function Home() {
           }
         }
       } else {
-        // Migrate the previous Office Fit-Out draft.
+        // Migrate previous Office Fit-Out draft
         const legacy =
           localStorage.getItem(DRAFT_KEY);
 
@@ -1786,10 +1964,32 @@ export default function Home() {
   ]);
 
   // ==================================================
-  // EDIT FUNCTIONS
+  // PROJECT UPDATE FUNCTIONS
   // ==================================================
 
-  function setInfo<K extends keyof Project>(
+  function setProject(
+    fn: (old: Project) => Project
+  ) {
+    setDrafts(old => ({
+      ...old,
+      [workspace]: fn(old[workspace]),
+    }));
+  }
+
+  function goWorkspace(
+    next: Workspace
+  ) {
+    setWorkspace(next);
+    setTab(next);
+
+    setSelectedOpeningId(null);
+    setStyleMenuId(null);
+    setNotice('');
+  }
+
+  function setInfo<
+    K extends keyof Project
+  >(
     key: K,
     value: Project[K]
   ) {
@@ -1799,7 +1999,9 @@ export default function Home() {
     }));
   }
 
-  function setRule<K extends keyof Rules>(
+  function setRule<
+    K extends keyof Rules
+  >(
     key: K,
     value: Rules[K]
   ) {
@@ -1829,9 +2031,14 @@ export default function Home() {
         style
       );
 
-      if (linked === '1/2" Clear Tempered') {
+      if (
+        linked === '1/2" Clear Tempered'
+      ) {
         updated[
-          glassKey('1/2" Clear', 'Tempered')
+          glassKey(
+            '1/2" Clear',
+            'Tempered'
+          )
         ] = rate;
 
         updated[
@@ -1842,9 +2049,14 @@ export default function Home() {
         ] = rate;
       }
 
-      if (linked === '1/4" Clear Tempered') {
+      if (
+        linked === '1/4" Clear Tempered'
+      ) {
         updated[
-          glassKey('1/4" Clear', 'Tempered')
+          glassKey(
+            '1/4" Clear',
+            'Tempered'
+          )
         ] = rate;
 
         updated[
@@ -1864,7 +2076,8 @@ export default function Home() {
           glassSpecRates: updated,
 
           glassRates:
-            linked !== null && rate !== null
+            linked !== null &&
+            rate !== null
               ? {
                   ...old.pricing.glassRates,
                   [linked]: rate,
@@ -1875,10 +2088,14 @@ export default function Home() {
     });
   }
 
-  function toggleGroup(name: string) {
+  function toggleGroup(
+    name: string
+  ) {
     setExpandedGroups(old =>
       old.includes(name)
-        ? old.filter(item => item !== name)
+        ? old.filter(
+            item => item !== name
+          )
         : [...old, name]
     );
   }
@@ -1906,11 +2123,14 @@ export default function Home() {
       )
     );
 
-    let k = project.openings.length + 1;
+    let k =
+      project.openings.length + 1;
 
     while (
       used.has(
-        `${WORKSPACE_PREFIX[workspace]}-${String(k).padStart(2, '0')}`
+        `${WORKSPACE_PREFIX[workspace]}-${String(
+          k
+        ).padStart(2, '0')}`
       )
     ) {
       k++;
@@ -1923,6 +2143,7 @@ export default function Home() {
 
     setProject(old => ({
       ...old,
+
       openings: [
         ...old.openings,
         next,
@@ -2032,13 +2253,17 @@ export default function Home() {
     return (
       unchanged ||
       confirm(
-        `Replace the current ${WORKSPACE_NAMES[target]} draft? Unsaved changes will be lost. You can cancel and save it first.`
+        `Replace the current ${WORKSPACE_NAMES[target]} draft? Unsaved changes will be lost. Cancel to save first.`
       )
     );
   }
 
-  function openSaved(record: Saved) {
-    if (!safeSwitch(record.workspace)) {
+  function openSaved(
+    record: Saved
+  ) {
+    if (
+      !safeSwitch(record.workspace)
+    ) {
       return;
     }
 
@@ -2070,6 +2295,7 @@ export default function Home() {
     setActiveIds(old => {
       const next = { ...old };
       delete next[workspace];
+
       return next;
     });
 
@@ -2077,7 +2303,9 @@ export default function Home() {
     setTab(workspace);
   }
 
-  function duplicate(record: Saved) {
+  function duplicate(
+    record: Saved
+  ) {
     const pr = clone(record.project);
 
     pr.projectName += ' (Copy)';
@@ -2103,7 +2331,9 @@ export default function Home() {
     );
   }
 
-  function rename(record: Saved) {
+  function rename(
+    record: Saved
+  ) {
     const name = prompt(
       'New project name:',
       record.project.projectName
@@ -2132,7 +2362,8 @@ export default function Home() {
 
         'Estimate renamed.'
       ) &&
-      activeIds[record.workspace] === record.id
+      activeIds[record.workspace] ===
+        record.id
     ) {
       setDrafts(old => ({
         ...old,
@@ -2145,7 +2376,9 @@ export default function Home() {
     }
   }
 
-  function remove(record: Saved) {
+  function remove(
+    record: Saved
+  ) {
     if (
       !confirm(
         `Delete ${record.project.projectName}? You cannot undo this without a backup.`
@@ -2162,27 +2395,32 @@ export default function Home() {
 
         'Estimate deleted.'
       ) &&
-      activeIds[record.workspace] === record.id
+      activeIds[record.workspace] ===
+        record.id
     ) {
       setActiveIds(old => {
         const next = { ...old };
         delete next[record.workspace];
+
         return next;
       });
     }
   }
 
   // ==================================================
-  // BACKUP
+  // BACKUP FUNCTIONS
   // ==================================================
 
   function backupDraft() {
     download(
-      `${workspace}-${safeName(project.estimateNumber)}.json`,
+      `${workspace}-${safeName(
+        project.estimateNumber
+      )}.json`,
 
       JSON.stringify(
         {
-          format: 'aspect-workspace-estimate',
+          format:
+            'aspect-workspace-estimate',
           workspace,
           project,
         },
@@ -2199,8 +2437,9 @@ export default function Home() {
 
       JSON.stringify(
         {
-          format: 'aspect-estimator-library',
-          version: 5,
+          format:
+            'aspect-estimator-library',
+          version: 6,
           estimates: library,
         },
 
@@ -2211,14 +2450,18 @@ export default function Home() {
   }
 
   // ==================================================
-  // IMPORT
+  // IMPORT FUNCTIONS
   // ==================================================
 
-  async function importDraft(file?: File) {
+  async function importDraft(
+    file?: File
+  ) {
     if (!file) return;
 
     try {
-      if (file.size > 2_000_000) {
+      if (
+        file.size > 2_000_000
+      ) {
         throw Error('Too large');
       }
 
@@ -2254,6 +2497,7 @@ export default function Home() {
       setActiveIds(old => {
         const next = { ...old };
         delete next[target];
+
         return next;
       });
 
@@ -2275,11 +2519,15 @@ export default function Home() {
     }
   }
 
-  async function importLibrary(file?: File) {
+  async function importLibrary(
+    file?: File
+  ) {
     if (!file) return;
 
     try {
-      if (file.size > 5_000_000) {
+      if (
+        file.size > 5_000_000
+      ) {
         throw Error('Too large');
       }
 
@@ -2338,7 +2586,7 @@ export default function Home() {
 
       if (
         confirm(
-          `Add ${imported.length} estimates to your existing library?`
+          `Add ${imported.length} estimates to your library?`
         )
       ) {
         saveLibrary(
@@ -2367,10 +2615,14 @@ export default function Home() {
 
   function exportCSV() {
     const header = [
-      'Mark',
+      'Workspace',
+      'Project Framing System',
+      'Project Door Model',
+      'Opening Mark',
       'Glass Specification',
       'Glass Style',
-      'Qty',
+      'Opening Type',
+      'Quantity',
       'Width in',
       'Height in',
       'Glass SF',
@@ -2388,9 +2640,22 @@ export default function Home() {
     ];
 
     const rows = totals.lines.map(l => [
+      WORKSPACE_NAMES[workspace],
+
+      project.framingSystem,
+
+      workspace === 'storefront'
+        ? project.storefrontDoorModel
+        : '',
+
       l.opening.mark,
       l.opening.glassSpecification,
       l.opening.glassStyle,
+
+      formatOpeningType(
+        l.opening.openingType
+      ),
+
       l.opening.quantity,
       l.width,
       l.height,
@@ -2409,7 +2674,9 @@ export default function Home() {
     ]);
 
     download(
-      `${workspace}-${safeName(project.estimateNumber)}-takeoff.csv`,
+      `${workspace}-${safeName(
+        project.estimateNumber
+      )}-takeoff.csv`,
 
       '\uFEFF' +
         [header, ...rows]
@@ -2424,7 +2691,7 @@ export default function Home() {
   }
 
   // ==================================================
-  // TOP TOOLBAR
+  // TOOLBAR
   // ==================================================
 
   const toolbar = (
@@ -2500,7 +2767,7 @@ export default function Home() {
         <div className="topbar-right">
           <span className="top-pill">
             <span className="green-dot" />
-            Browser-based · V1.7.0
+            Browser-based · V1.7.1
           </span>
 
           <span className="autosave">
@@ -2552,7 +2819,7 @@ export default function Home() {
               setTab('pricing')
             }
           >
-            ◫ Pricing & Rates
+            ◫ Pricing &amp; Rates
           </button>
 
           <button
@@ -2572,14 +2839,14 @@ export default function Home() {
 
           <div className="sidebar-help">
             <strong>
-              Estimator V1.7.0
+              Estimator V1.7.1
             </strong>
 
             <p>
-              Each workspace has its own draft
-              and cost worksheet. Saved projects
-              are categorized by workspace and
-              stored in this browser.
+              Four independent estimating
+              workspaces. Storefront includes
+              framing and entrance-door models.
+              Saved projects remain in this browser.
             </p>
           </div>
         </aside>
@@ -2591,7 +2858,9 @@ export default function Home() {
             <div>
               <div className="eyebrow">
                 COMMERCIAL GLAZING /{' '}
-                {WORKSPACE_NAMES[workspace].toUpperCase()}
+                {WORKSPACE_NAMES[
+                  workspace
+                ].toUpperCase()}
               </div>
 
               <h1>
@@ -2603,7 +2872,8 @@ export default function Home() {
               </h1>
 
               <p className="page-desc">
-                {tab !== 'pricing' && tab !== 'saved'
+                {tab !== 'pricing' &&
+                tab !== 'saved'
                   ? 'Set glass, hardware, OPEX and Gross Net Profit % for each opening separately.'
                   : tab === 'pricing'
                     ? 'Organized glass rates, framing rates, and worksheet settings.'
@@ -2756,7 +3026,6 @@ export default function Home() {
                         ['Project Address', 'location'],
                         ['Estimator', 'estimator'],
                         ['Estimate Date', 'date'],
-                        ['Framing System', 'framingSystem'],
                       ] as [
                         string,
                         | 'projectName'
@@ -2765,7 +3034,6 @@ export default function Home() {
                         | 'location'
                         | 'estimator'
                         | 'date'
-                        | 'framingSystem'
                       ][]
                     ).map(([label, key]) => (
                       <Field
@@ -2786,6 +3054,142 @@ export default function Home() {
                       </Field>
                     ))}
 
+                    {/* ================================= */}
+                    {/* STOREFRONT-ONLY FRAMING DROPDOWN */}
+                    {/* ================================= */}
+
+                    {workspace === 'storefront' ? (
+                      <>
+                        <Field
+                          label="Framing Type / System"
+                          hint={
+                            modelDescription(
+                              STOREFRONT_FRAMES,
+                              project.framingSystem
+                            ) ||
+                            (
+                              project.framingSystem
+                                ? 'Existing/custom framing value. Select a listed model when applicable.'
+                                : 'Choose the framing system for this storefront project.'
+                            )
+                          }
+                        >
+                          <select
+                            className="input"
+                            value={project.framingSystem}
+                            onChange={e =>
+                              setInfo(
+                                'framingSystem',
+                                e.target.value
+                              )
+                            }
+                          >
+                            <option value="">
+                              — Select Storefront Framing —
+                            </option>
+
+                            {project.framingSystem &&
+                              !STOREFRONT_FRAMES.some(
+                                x =>
+                                  x.name ===
+                                  project.framingSystem
+                              ) && (
+                                <option
+                                  value={project.framingSystem}
+                                >
+                                  {project.framingSystem}
+                                  {' '}(existing)
+                                </option>
+                              )}
+
+                            {STOREFRONT_FRAMES.map(item => (
+                              <option
+                                key={item.name}
+                                value={item.name}
+                              >
+                                {item.name}
+                              </option>
+                            ))}
+                          </select>
+                        </Field>
+
+                        {/* ================================= */}
+                        {/* STOREFRONT-ONLY DOOR DROPDOWN */}
+                        {/* ================================= */}
+
+                        <Field
+                          label="Door Model / Type"
+                          hint={
+                            modelDescription(
+                              STOREFRONT_DOORS,
+                              project.storefrontDoorModel
+                            ) ||
+                            (
+                              project.storefrontDoorModel
+                                ? 'Previously saved custom door model.'
+                                : 'Choose a door model, or leave blank if no entrance door is specified.'
+                            )
+                          }
+                        >
+                          <select
+                            className="input"
+                            value={
+                              project.storefrontDoorModel
+                            }
+                            onChange={e =>
+                              setInfo(
+                                'storefrontDoorModel',
+                                e.target.value
+                              )
+                            }
+                          >
+                            <option value="">
+                              — No door / Not specified —
+                            </option>
+
+                            {project.storefrontDoorModel &&
+                              !STOREFRONT_DOORS.some(
+                                x =>
+                                  x.name ===
+                                  project.storefrontDoorModel
+                              ) && (
+                                <option
+                                  value={
+                                    project.storefrontDoorModel
+                                  }
+                                >
+                                  {project.storefrontDoorModel}
+                                  {' '}(existing)
+                                </option>
+                              )}
+
+                            {STOREFRONT_DOORS.map(item => (
+                              <option
+                                key={item.name}
+                                value={item.name}
+                              >
+                                {item.name}
+                              </option>
+                            ))}
+                          </select>
+                        </Field>
+                      </>
+                    ) : (
+                      <Field label="Framing System">
+                        <Txt
+                          value={project.framingSystem}
+                          onChange={v =>
+                            setInfo(
+                              'framingSystem',
+                              v
+                            )
+                          }
+                        />
+                      </Field>
+                    )}
+
+                    {/* FRAME FINISH */}
+
                     <Field label="Frame Finish">
                       <select
                         className="input"
@@ -2797,35 +3201,81 @@ export default function Home() {
                           )
                         }
                       >
-                        {[
-                          'Dark Bronze Anodized',
+                        {![
                           'Clear Anodized',
-                          'Black',
+                          'Dark Bronze Anodized',
+                          'Black Anodized',
+                          'Black Painted',
+                          'White Painted',
+                          'Mill Finish',
+                          'Custom / Other',
+                        ].includes(project.finish) && (
+                          <option value={project.finish}>
+                            {project.finish}
+                            {' '}(existing)
+                          </option>
+                        )}
+
+                        {[
+                          'Clear Anodized',
+                          'Dark Bronze Anodized',
+                          'Black Anodized', 
+                          'Black Painted',
+                          'White Painted',
                           'Mill Finish',
                           'Custom / Other',
                         ].map(x => (
-                          <option key={x}>
+                          <option
+                            key={x}
+                            value={x}
+                          >
                             {x}
                           </option>
                         ))}
                       </select>
                     </Field>
                   </div>
+
+                  {workspace === 'storefront' && (
+                    <p
+                      className="panel-subtitle"
+                      style={{ marginTop: 18 }}
+                    >
+                      <strong>
+                        Storefront specifications:
+                      </strong>
+                      {' '}
+                      The selected framing and door
+                      models are saved with this project
+                      and included in CSV exports.
+                      Their selection does not
+                      automatically change material
+                      rates or confirm compatibility.
+                      Different door models within
+                      one project may be specified
+                      in individual opening notes.
+                    </p>
+                  )}
                 </section>
 
+                {/* ================================= */}
                 {/* OPENING SCHEDULE */}
+                {/* ================================= */}
 
                 <section className="panel">
                   <div className="panel-heading">
                     <div>
                       <span className="section-label">
                         02 /{' '}
-                        {WORKSPACE_NAMES[workspace].toUpperCase()}
+                        {WORKSPACE_NAMES[
+                          workspace
+                        ].toUpperCase()}
                         {' '}TAKEOFF
                       </span>
 
                       <h2>
-                        Openings ({project.openings.length})
+                        Openings (
+                        {project.openings.length})
                       </h2>
                     </div>
 
@@ -2838,14 +3288,13 @@ export default function Home() {
                   </div>
 
                   <p className="panel-subtitle">
-                    Each opening has its own OPEX,
-                    Gross Net Profit %, and full
-                    worksheet for {WORKSPACE_NAMES[workspace]}.
-                    Select a glass specification and
-                    use the three-dot button to choose
-                    Annealed or Tempered. Unpriced
-                    specifications require a custom
-                    rate or manual glass cost.
+                    Each opening has its own
+                    OPEX, Gross Net Profit %,
+                    glass specification,
+                    and full cost worksheet.
+                    Use the three-dot button beside
+                    Glass Specification to select
+                    Annealed or Tempered.
                   </p>
 
                   {project.openings.map((o, i) => {
@@ -2858,6 +3307,7 @@ export default function Home() {
                         className="opening-card"
                         key={o.id}
                       >
+
                         {/* OPENING HEADER */}
 
                         <div className="opening-heading">
@@ -2868,9 +3318,7 @@ export default function Home() {
                               ).padStart(2, '0')}
                             </span>
 
-                            <strong>
-                              {o.mark}
-                            </strong>
+                            <strong>{o.mark}</strong>
 
                             <span className="opening-category">
                               {formatOpeningType(
@@ -2909,6 +3357,7 @@ export default function Home() {
                         {/* OPENING INPUTS */}
 
                         <div className="form-grid opening-grid">
+
                           <Field label="Opening mark">
                             <Txt
                               value={o.mark}
@@ -3123,7 +3572,6 @@ export default function Home() {
                                     onClick={() => {
                                       setOpening(o.id, {
                                         glassStyle: style,
-
                                         glassRateOverride:
                                           null,
                                       });
@@ -3228,7 +3676,8 @@ export default function Home() {
                               label="Glass Rate $/SF"
                               unit="SF"
                               selected={
-                                `${o.glassSpecification} · ${o.glassStyle}`
+                                `${o.glassSpecification} · ` +
+                                o.glassStyle
                               }
                               defaultRate={catalogRate(
                                 o.glassSpecification,
@@ -3290,7 +3739,8 @@ export default function Home() {
                                 label="Framing Rate $/LF"
                                 unit="LF"
                                 selected={
-                                  project.framingSystem
+                                  project.framingSystem ||
+                                  'Framing system not selected'
                                 }
                                 defaultRate={
                                   p.framingRatePerLF
@@ -3338,11 +3788,11 @@ export default function Home() {
                             />
                           </Field>
 
-                          {/* PROFIT TARGET */}
+                          {/* GROSS PROFIT */}
 
                           <Field
                             label="TARGET (GROSS) NET PROFIT %"
-                            hint="Enter the target for this opening, below 100."
+                            hint="Enter your percentage for this opening (below 100)."
                           >
                             <MarginInput
                               value={
@@ -3383,27 +3833,37 @@ export default function Home() {
 
                         <div className="opening-result">
                           <div>
-                            <span>Glass area</span>
+                            <span>
+                              Glass area
+                            </span>
 
                             <strong>
                               {line
-                                ? `${n4(line.glassSF)} SF`
+                                ? `${n4(
+                                    line.glassSF
+                                  )} SF`
                                 : '—'}
                             </strong>
                           </div>
 
                           <div>
-                            <span>Frame length</span>
+                            <span>
+                              Frame length
+                            </span>
 
                             <strong>
                               {line
-                                ? `${n4(line.frameLF)} LF`
+                                ? `${n4(
+                                    line.frameLF
+                                  )} LF`
                                 : '—'}
                             </strong>
                           </div>
 
                           <div>
-                            <span>Final Cost</span>
+                            <span>
+                              Final Cost
+                            </span>
 
                             <strong>
                               {line
@@ -3415,7 +3875,7 @@ export default function Home() {
                           </div>
                         </div>
 
-                        {/* COMPUTATION DROPDOWN */}
+                        {/* COMPUTATION */}
 
                         {line && (
                           <div
@@ -3456,7 +3916,7 @@ export default function Home() {
                   </button>
                 </section>
 
-                {/* PROJECT NOTES */}
+                {/* NOTES */}
 
                 <section className="panel">
                   <div className="panel-heading">
@@ -3466,7 +3926,7 @@ export default function Home() {
                       </span>
 
                       <h2>
-                        Scope & Exclusions
+                        Scope &amp; Exclusions
                       </h2>
                     </div>
                   </div>
@@ -3551,6 +4011,44 @@ export default function Home() {
                     </select>
                   </div>
 
+                  {/* STOREFRONT SPECIFICATIONS */}
+
+                  {workspace === 'storefront' &&
+                    (
+                      project.framingSystem ||
+                      project.storefrontDoorModel
+                    ) && (
+                      <div
+                        style={{
+                          color: '#dae6f0',
+                          fontSize: 11,
+                          padding:
+                            '0 14px 8px',
+                          lineHeight: 1.65,
+                        }}
+                      >
+                        {project.framingSystem && (
+                          <div>
+                            <strong>
+                              Framing:
+                            </strong>
+                            {' '}
+                            {project.framingSystem}
+                          </div>
+                        )}
+
+                        {project.storefrontDoorModel && (
+                          <div>
+                            <strong>
+                              Door model:
+                            </strong>
+                            {' '}
+                            {project.storefrontDoorModel}
+                          </div>
+                        )}
+                      </div>
+                    )}
+
                   {/* FINAL PRICE */}
 
                   <div className="summary-hero">
@@ -3617,7 +4115,7 @@ export default function Home() {
 
                   {selected && (
                     <>
-                      {/* GROSS NET PROFIT */}
+                      {/* GROSS PROFIT */}
 
                       <div
                         style={{
@@ -3666,40 +4164,32 @@ export default function Home() {
                               'Price (auto)',
                               selected.price,
                             ],
-
                             [
                               'CC Surcharge (Final Price)',
                               selected.finalPrice,
                             ],
-
                             [
                               'Cost of Hardware',
                               selected.hardwareCost,
                             ],
-
                             [
                               'Total Hardware Cost',
                               selected.totalHardwareCost,
                             ],
-
                             [
                               'Cost of Glass',
                               selected.glassCost,
                             ],
-
                             [
                               'Total Glass Cost',
                               selected.totalGlassCost,
                             ],
-
                             ['OPEX', selected.opex],
                             ['Risk', selected.risk],
-
                             [
                               'Total Cost',
                               selected.totalCost,
                             ],
-
                             [
                               '(gross) Net',
                               selected.grossNet,
@@ -3747,7 +4237,7 @@ export default function Home() {
                         </div>
                       </div>
 
-                      {/* EXPANDABLE COMPUTATION */}
+                      {/* COMPUTATION */}
 
                       <div
                         style={{
@@ -3881,10 +4371,13 @@ export default function Home() {
                   </h2>
 
                   <p className="panel-subtitle">
-                    Pricing here is saved with the
-                    current {WORKSPACE_NAMES[workspace]}
-                    {' '}estimate. Other workspaces
+                    Pricing is saved with the current
+                    {` ${WORKSPACE_NAMES[workspace]} `}
+                    estimate. Other workspaces
                     retain their own rates.
+                    Selecting a framing or door model
+                    does not automatically change
+                    these rates.
                   </p>
 
                   <div
@@ -3953,12 +4446,12 @@ export default function Home() {
 
                     <p className="panel-subtitle">
                       All {GLASS_OPTIONS.length} glass
-                      specifications, grouped in
-                      collapsible sections.
-                      Enter Annealed or Tempered rates
-                      as applicable. Blank means not
-                      priced. Existing default rates
-                      remain available.
+                      specifications, organized in
+                      collapsible categories.
+                      Enter separate Annealed or
+                      Tempered rates as applicable.
+                      Blank means not priced.
+                      Existing rates are retained.
                     </p>
 
                     {/* SEARCH AND FILTER */}
@@ -4037,7 +4530,7 @@ export default function Home() {
                           setRateFilter('all');
 
                           setExpandedGroups(
-                            GLASS_GROUP_NAMES.slice()
+                            [...GLASS_GROUP_NAMES]
                           );
                         }}
                       >
@@ -4057,7 +4550,7 @@ export default function Home() {
                       </button>
                     </div>
 
-                    {/* COLLAPSIBLE GLASS GROUPS */}
+                    {/* GLASS GROUPS */}
 
                     {GLASS_GROUPS.map(group => {
                       const visible = group.specs.filter(
@@ -4198,6 +4691,8 @@ export default function Home() {
                                   '6px 12px 12px',
                               }}
                             >
+                              {/* COLUMN HEADERS */}
+
                               <div
                                 style={{
                                   display: 'grid',
@@ -4224,6 +4719,8 @@ export default function Home() {
                                   Tempered $/SF
                                 </span>
                               </div>
+
+                              {/* GLASS RATE ROWS */}
 
                               {visible.map(spec => (
                                 <div
@@ -4335,17 +4832,18 @@ export default function Home() {
                         marginTop: 12,
                       }}
                     >
-                      Rates are saved with this estimate
-                      when you click Save Changes.
-                      Blank rates are not treated as
-                      $0.00. You can also override
-                      rates on individual openings.
+                      Rates are saved with the
+                      current estimate when you click
+                      Save Changes. Blank rates are
+                      not treated as $0.00.
+                      Custom rates can also be entered
+                      for individual openings.
                     </p>
                   </section>
                 )}
 
                 {/* ================================= */}
-                {/* FRAMING & DOOR PACKAGES */}
+                {/* FRAMING AND DOOR PACKAGES */}
                 {/* ================================= */}
 
                 {pricingView === 'framing' && (
@@ -4363,12 +4861,13 @@ export default function Home() {
                     </div>
 
                     <p className="panel-subtitle">
-                      These rates apply to the current
-                      {' '}{WORKSPACE_NAMES[workspace]}
-                      {' '}draft, independently of the
-                      Glass Rates catalog. Calculated
-                      hardware uses framing $/LF plus
-                      door package and accessory amounts.
+                      These rates apply to the
+                      current {WORKSPACE_NAMES[workspace]}
+                      {' '}draft independently of the
+                      Glass Rates catalog.
+                      Selecting a Storefront framing
+                      or door model does not
+                      automatically change these costs.
                     </p>
 
                     <div className="form-grid">
@@ -4432,8 +4931,9 @@ export default function Home() {
 
                       <p>
                         Opening-specific framing rates
-                        and accessories can be overridden
-                        within any workspace.
+                        and accessories can still be
+                        overridden under the active
+                        estimating workspace.
                       </p>
                     </div>
                   </section>
@@ -4555,6 +5055,7 @@ export default function Home() {
                         Set OPEX and (gross) Net Profit %
                         independently for each opening
                         in the active workspace.
+                        There is no global profit target.
                       </p>
 
                       <div className="formula-panel">
@@ -4586,7 +5087,7 @@ export default function Home() {
                 )}
               </div>
 
-              {/* PRICING PROJECT TOTALS */}
+              {/* LIVE PROJECT TOTALS */}
 
               <div className="pricing-side">
                 <section className="panel sticky-panel">
@@ -4671,7 +5172,8 @@ export default function Home() {
                   </span>
 
                   <h2>
-                    Saved Estimates ({library.length})
+                    Saved Estimates (
+                    {library.length})
                   </h2>
                 </div>
 
@@ -4707,9 +5209,10 @@ export default function Home() {
               </div>
 
               <p className="panel-subtitle">
-                Saved projects from all four workspaces
-                appear here. Older estimates are filed
-                under Office Fit-Out.
+                Saved projects from all four
+                workspaces appear here.
+                Older estimates are filed under
+                Office Fit-Out.
                 Data is browser-local, not yet shared
                 across employees or computers.
               </p>
@@ -4730,7 +5233,8 @@ export default function Home() {
                   value={savedFilter}
                   onChange={e =>
                     setSavedFilter(
-                      e.target.value as Workspace | 'all'
+                      e.target.value as
+                        Workspace | 'all'
                     )
                   }
                 >
@@ -4827,6 +5331,24 @@ export default function Home() {
                             {' · '}
                             {item.project.clientName}
                           </p>
+
+                          {/* STOREFRONT SPECIFICATIONS */}
+
+                          {item.workspace === 'storefront' && (
+                            <p
+                              style={{
+                                fontSize: 11,
+                                color: '#65788a',
+                                overflowWrap: 'anywhere',
+                              }}
+                            >
+                              {item.project.framingSystem &&
+                                `Framing: ${item.project.framingSystem}`}
+
+                              {item.project.storefrontDoorModel &&
+                                ` · Door: ${item.project.storefrontDoorModel}`}
+                            </p>
+                          )}
                         </div>
 
                         <small>
@@ -4938,11 +5460,11 @@ export default function Home() {
 
           <footer className="footer">
             <span>
-              Aspect Glasswork · Four Workspaces · V1.7.0
+              Aspect Glasswork · V1.7.1
             </span>
 
             <span>
-              Per-opening worksheets · USD ·
+              Four workspaces · USD ·
               Browser-local saved projects
             </span>
           </footer>
