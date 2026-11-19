@@ -21,7 +21,7 @@ import type {
   StorefrontOpening,
 } from '../lib/types';
 
-// ASPECT GLASSWORK ESTIMATING STUDIO V1.7.15
+// ASPECT GLASSWORK ESTIMATING STUDIO V1.7.16
 // Blue and white theme, 13 Storefront glass specs, 8 Windows glass specs,
 // 20 Windows-only window types; unnumbered framing and door dropdowns.
 // Storefront framing AND door models now have an Other choice with a custom
@@ -30,7 +30,8 @@ import type {
 // New estimates in all workspaces prompt for Frame Finish; saved finishes are kept.
 // All workspaces support custom frame finishes; calculations are unchanged.
 // Existing estimating formulas, saved projects and model dropdowns are retained.
-// Storefront Excel and CSV now export once unit calculations are valid; incomplete project metadata is marked as a draft.
+// Storefront Excel now shows editable base amounts and nearby settings, with short formulas.
+// CSV and draft-export behavior remain unchanged.
 
 // =====================================================
 // WORKSPACES
@@ -1786,7 +1787,7 @@ function storefrontXlsx(project: Project, totals: Totals): Uint8Array {
     excelText(overview, `C${r}`, unitNames[i], 27);
   });
   const noteRow = 27 + totals.lines.length;
-  excelText(overview, `A${noteRow}`, 'Editable formulas and assumptions are in each Unit worksheet.', 30);
+  excelText(overview, `A${noteRow}`, 'Simple formulas and visible rates are in each Unit worksheet.', 30);
   overview.merges.push(`A${noteRow}:C${noteRow}`);
   excelText(overview, `A${noteRow + 1}`, 'Cost formulas follow the live app; no material waste allowance.', 30);
   overview.merges.push(`A${noteRow + 1}:C${noteRow + 1}`);
@@ -1821,69 +1822,100 @@ function storefrontXlsx(project: Project, totals: Totals): Uint8Array {
     excelText(sheet, 'B5', `${project.framingSystem || 'Unspecified'} / ${project.finish || 'Unspecified'}`, 29);
     sheet.merges.push('B5:C5');
 
+    // Simple, spreadsheet-friendly format approved for V1.7.16.
+    // Base amounts are VALUES (not complicated formulas). All derived rows
+    // use short formulas pointing to nearby, plainly labeled settings.
+    // This preserves the application's live pricing exactly at export time.
     const r = (
       row: number, label: string, formula: string, cached: number,
       kind: 'price' | 'final' | 'plain' | 'subtotal' | 'opex' | 'risk' | 'total' | 'net' | 'percent'
     ) => storefrontSummaryRow(sheet, row, label, formula, cached, kind);
-    r(6, 'Price', 'IF(B44>=1,0,B17/(1-B44))', l.price ?? 0, 'price');
-    r(7, 'CC Surcharge + Commission', 'B6*(1+B45)', l.finalPrice ?? 0, 'final');
+
+    const baseAmount = (
+      row: number, label: string, value: number,
+      kind: 'plain' | 'opex' = 'plain', formula?: string
+    ) => {
+      const style = kind === 'opex' ? 12 : 25;
+      excelText(sheet, `A${row}`, label, kind === 'opex' ? 11 : 3);
+      if (formula) {
+        excelFormula(sheet, `B${row}`, formula, value, 4);
+      } else {
+        excelNumber(sheet, `B${row}`, value, style);
+      }
+    };
+
+    r(6, 'Price', 'B17/(1-B20)', l.price ?? 0, 'price');
+    r(7, 'CC Surcharge + Commission', 'B6*(1+B27)', l.finalPrice ?? 0, 'final');
     excelText(sheet, 'C7', 'CC surcharge only; no separate commission is modeled.', 30);
-    r(9, 'Cost of Hardware', 'IF(B34="manual",B38*B28,B47*B35+(B36+B37)*B28)', l.hardwareCost, 'plain');
-    r(10, 'Total Hardware Cost', '(B9+B39)*(1+B40)', l.totalHardwareCost, 'subtotal');
-    r(12, 'Cost of Glass', 'IF(B31="manual",B33*B28,B46*B32)', l.glassCost, 'plain');
-    r(13, 'Total Glass Cost', 'B12*(1-B41)', l.totalGlassCost, 'subtotal');
-    r(15, 'OPEX', 'B42*B28', l.opex, 'opex');
-    r(16, 'Risk', 'B13*B43', l.risk, 'risk');
+
+    baseAmount(9, `Cost of Hardware${o.hardwareMode === 'manual' ? ' [manual]' : ' [calculated]'}`,
+      l.hardwareCost, 'plain',
+      o.hardwareMode === 'calculated' ? 'B35*B42+(B45+B46)*B31' : undefined);
+    r(10, 'Total Hardware Cost', '(B9+B23)*(1+B24)', l.totalHardwareCost, 'subtotal');
+
+    baseAmount(12, `Cost of Glass${o.glassMode === 'manual' ? ' [manual]' : ' [calculated]'}`,
+      l.glassCost, 'plain', o.glassMode === 'calculated' ? 'B34*B41' : undefined);
+    r(13, 'Total Glass Cost', 'B12*(1-B25)', l.totalGlassCost, 'subtotal');
+
+    baseAmount(15, 'OPEX [manual]', l.opex, 'opex');
+    r(16, 'Risk', 'B13*B26', l.risk, 'risk');
     r(17, 'Total Cost', 'SUM(B10,B13,B15,B16)', l.totalCost, 'total');
     r(19, '(gross) Net $', 'B6-B17', l.grossNet ?? 0, 'net');
-    r(21, '(gross) Net Profit %', 'IFERROR(B19/B6,0)', (l.grossNetProfitPct ?? 0) / 100, 'percent');
-    excelText(sheet, 'A23', `${o.mark}  |  ${formatOpeningType(o.openingType)}`, 21);
-    sheet.merges.push('A23:C23');
-    excelText(sheet, 'A24', 'Glass Specification', 28);
-    excelText(sheet, 'B24', `${o.glassSpecification}  (${o.glassStyle})`, 29);
-    sheet.merges.push('B24:C24');
-    excelText(sheet, 'A25', 'CALCULATION INPUTS', 31);
-    excelText(sheet, 'B25', 'VALUE', 31);
-    excelText(sheet, 'C25', 'METHOD / UNIT', 31);
-    const inNum = (row: number, label: string, value: number, note: string, style=24) => {
+    excelText(sheet, 'A20', '(gross) Net Profit % [manual]', 19);
+    excelNumber(sheet, 'B20', (o.targetGrossNetPct ?? 0) / 100, 20);
+
+    // Visible settings, immediately beneath the cost summary. The five
+    // rates are the real project settings, not invented effective markups.
+    excelText(sheet, 'A22', 'VISIBLE ADJUSTMENT RATES  |  EDITABLE', 21);
+    sheet.merges.push('A22:C22');
+    const setting = (row: number, label: string, value: number, style: number, detail: string) => {
       excelText(sheet, `A${row}`, label, 23);
       excelNumber(sheet, `B${row}`, value, style);
-      excelText(sheet, `C${row}`, note, 30);
+      excelText(sheet, `C${row}`, detail, 30);
     };
-    const inText = (row: number, label: string, value: string, note: string) => {
+    setting(23, 'Fixed Hardware Fee / Unit', p.hardwareFixedFee, 25, 'Added once per opening mark');
+    setting(24, 'Hardware Tax %', p.hardwareTaxPct / 100, 26, 'Applied to hardware plus fixed fee');
+    setting(25, 'Glass Discount %', p.glassDiscountPct / 100, 26, 'Deducted from initial glass cost');
+    setting(26, 'Risk %', p.riskPct / 100, 26, 'Applied to total glass cost');
+    setting(27, 'CC Surcharge %', p.ccSurchargePct / 100, 26, 'Applied to price before CC');
+
+    excelText(sheet, 'A29', 'UNIT DETAILS  |  ORIGINAL INPUTS', 21);
+    sheet.merges.push('A29:C29');
+    excelText(sheet, 'A30', 'Glass Specification', 28);
+    excelText(sheet, 'B30', `${o.glassSpecification} (${o.glassStyle})`, 29);
+    sheet.merges.push('B30:C30');
+    const infoNumber = (row: number, label: string, value: number, explanation: string, style = 24) => {
+      excelText(sheet, `A${row}`, label, 23);
+      excelNumber(sheet, `B${row}`, value, style);
+      excelText(sheet, `C${row}`, explanation, 30);
+    };
+    const infoText = (row: number, label: string, value: string, explanation: string) => {
       excelText(sheet, `A${row}`, label, 23);
       excelText(sheet, `B${row}`, value, 27);
-      excelText(sheet, `C${row}`, note, 30);
+      excelText(sheet, `C${row}`, explanation, 30);
     };
-    inNum(26, 'Width (in)', l.width, 'Parsed from unit width');
-    inNum(27, 'Height (in)', l.height, 'Parsed from unit height');
-    inNum(28, 'Quantity', o.quantity, 'Number of assemblies', 32);
-    inNum(29, 'Glazing Columns', o.columns, 'Whole number', 32);
-    inNum(30, 'Glazing Rows', o.rows, 'Whole number', 32);
-    inText(31, 'Glass Costing Mode', o.glassMode, 'calculated or manual');
-    inNum(32, 'Glass Rate ($/SF)', l.glassRate, 'Only used if Glass Mode = calculated', 25);
-    inNum(33, 'Manual Glass Cost / Assembly', o.manualGlassCostEach, 'Only used if Glass Mode = manual', 25);
-    inText(34, 'Hardware Costing Mode', o.hardwareMode, 'calculated or manual');
-    inNum(35, 'Frame Rate ($/LF)', l.frameRate, 'Calculated hardware only', 25);
-    inNum(36, 'Door Package / Assembly', l.doorRate, 'Single / double door package as applicable', 25);
-    inNum(37, 'Hardware Allowance / Assembly', o.hardwareAllowance, 'Calculated hardware only', 25);
-    inNum(38, 'Manual Hardware Cost / Assembly', o.manualHardwareCostEach, 'Only if Hardware Mode = manual', 25);
-    inNum(39, 'Fixed Hardware Fee / Unit', p.hardwareFixedFee, 'Charged once per opening mark', 25);
-    inNum(40, 'Hardware Tax %', p.hardwareTaxPct / 100, 'Applied to hardware + fixed fee', 26);
-    inNum(41, 'Glass Discount %', p.glassDiscountPct / 100, 'Discount applied after initial glass cost', 26);
-    inNum(42, 'OPEX / Assembly', o.opexPerAssembly, 'Multiplied by quantity', 25);
-    inNum(43, 'Risk %', p.riskPct / 100, 'Percent of total glass cost', 26);
-    inNum(44, 'Gross Net Profit % (target)', o.targetGrossNetPct === null ? 0 : o.targetGrossNetPct / 100, 'Margin, not markup', 26);
-    inNum(45, 'CC Surcharge %', p.ccSurchargePct / 100, 'Applied to price before CC', 26);
-    excelText(sheet, 'A46', 'Glass Area (SF)', 23);
-    excelFormula(sheet, 'B46', 'B26*B27/144*B28', l.glassSF, 33);
-    excelText(sheet, 'C46', '(Width × Height ÷ 144) × Qty', 30);
-    excelText(sheet, 'A47', 'Frame Length (LF)', 23);
-    excelFormula(sheet, 'B47', '(2*(B26+B27)+(B29-1)*B27+(B30-1)*B26)/12*B28', l.frameLF, 33);
-    excelText(sheet, 'C47', '[Perimeter + intermediate framing] ÷ 12 × Qty', 30);
-    excelText(sheet, 'A49', 'All blue-highlighted input cells can be changed in Excel.', 30);
+    infoNumber(31, 'Quantity', o.quantity, 'Number of assemblies; main costs include the quantity', 32);
+    infoNumber(32, 'Width (in)', l.width, 'Dimensions at export');
+    infoNumber(33, 'Height (in)', l.height, 'Dimensions at export');
+    infoNumber(34, 'Glass Area (SF)', l.glassSF, 'App-calculated snapshot for all assemblies', 33);
+    infoNumber(35, 'Frame Length (LF)', l.frameLF, 'App-calculated snapshot for all assemblies', 33);
+    infoText(36, 'Glass Costing Mode', o.glassMode, 'Calculated SF rate or manual per-assembly cost');
+    infoText(37, 'Hardware Costing Mode', o.hardwareMode, 'Calculated LF rate or manual per-assembly cost');
+    infoNumber(38, 'Manual Glass Cost / Assembly', o.manualGlassCostEach, 'Exact value typed in the app (if manual mode)', 25);
+    infoNumber(39, 'Manual Hardware Cost / Assembly', o.manualHardwareCostEach, 'Exact value typed in the app (if manual mode)', 25);
+    infoNumber(40, 'OPEX / Assembly', o.opexPerAssembly, 'Exact value typed in the app', 25);
+    infoNumber(41, 'Glass Rate ($/SF)', l.glassRate, 'Applied in app when Glass Costing Mode = calculated', 25);
+    infoNumber(42, 'Frame Rate ($/LF)', l.frameRate, 'Applied in app when Hardware Costing Mode = calculated', 25);
+    infoNumber(43, 'Glazing Columns', o.columns, 'Snapshot of glazing layout', 32);
+    infoNumber(44, 'Glazing Rows', o.rows, 'Snapshot of glazing layout', 32);
+    infoNumber(45, 'Door Package / Assembly', l.doorRate, 'App pricing input; included in calculated hardware', 25);
+    infoNumber(46, 'Hardware Allowance / Assembly', o.hardwareAllowance, 'App pricing input; included in calculated hardware', 25);
+
+    excelText(sheet, 'A48', 'Manual B9/B12 and OPEX B15 are direct amounts. Calculated modes use simple formulas.', 30);
+    sheet.merges.push('A48:C48');
+    excelText(sheet, 'A49', 'Width, height, glass SF and frame LF are snapshots; re-export if geometry or quantity changes.', 30);
     sheet.merges.push('A49:C49');
-    excelText(sheet, 'A50', 'The original app remains the source of truth until revised Excel values are re-entered.', 30);
+    excelText(sheet, 'A50', 'The app is the source of truth; no material waste allowance is included.', 30);
     sheet.merges.push('A50:C50');
     if (!totals.complete) {
       excelText(sheet, 'A52', 'PRELIMINARY DRAFT — REVIEW PROJECT VALIDATION BEFORE QUOTING', 21);
@@ -3499,7 +3531,7 @@ export default function Home() {
     }
   }
 
-  // Storefront-only styled and formula-driven Excel workbook.
+  // Storefront-only Excel workbook with simple formulas and direct base amounts.
   // This is additive; existing Takeoff CSV remains unchanged.
   function exportStorefrontExcel(): void {
     if (workspace !== 'storefront') return;
@@ -3599,7 +3631,7 @@ export default function Home() {
         <div className="topbar-right">
           <span className="top-pill">
             <span className="green-dot" />
-            Browser-based · V1.7.15
+            Browser-based · V1.7.16
           </span>
 
           <span className="autosave">
@@ -3704,7 +3736,7 @@ export default function Home() {
 
           <div className="sidebar-help">
             <strong>
-              Estimator V1.7.15
+              Estimator V1.7.16
             </strong>
 
             <p>
@@ -6629,7 +6661,7 @@ export default function Home() {
 
           <footer className="footer">
             <span>
-              Aspect Glasswork · V1.7.15
+              Aspect Glasswork · V1.7.16
             </span>
 
             <span>
