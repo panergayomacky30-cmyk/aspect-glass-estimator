@@ -21,7 +21,7 @@ import type {
   StorefrontOpening,
 } from '../lib/types';
 
-// ASPECT GLASSWORK ESTIMATING STUDIO V1.7.18
+// ASPECT GLASSWORK ESTIMATING STUDIO V1.7.19
 // Blue and white theme, 13 Storefront glass specs, 8 Windows glass specs,
 // 20 Windows-only window types; unnumbered framing and door dropdowns.
 // Storefront framing AND door models now have an Other choice with a custom
@@ -30,6 +30,7 @@ import type {
 // New estimates in all workspaces prompt for Frame Finish; saved finishes are kept.
 // All workspaces support custom frame finishes; calculations are unchanged.
 // Existing estimating formulas, saved projects and model dropdowns are retained.
+// V1.7.19: Added simple Excel exports to Windows, Curtain Walls and Office Fit-Out.
 // V1.7.18: Corrected Storefront manufacturer surcharge (+) and glass sales tax (+).
 // County: Rockland 15%; Orange 20-25%; Sullivan 25-30%; Other custom rate.
 // Storefront glass: cost × (1 + manufacturer surcharge) × (1 + glass sales tax).
@@ -1541,9 +1542,9 @@ function csvCell(
 
 
 // =====================================================
-// STOREFRONT EXCEL EXPORT (dependency-free XLSX)
+// ALL-WORKSPACE EXCEL EXPORT (dependency-free XLSX)
 // Uses native OOXML + ZIP to avoid requiring a new npm package.
-// Storefront only; all amounts & formulas follow calculate(project, 'storefront').
+// Storefront keeps the existing workbook; other workspaces use their own rules.
 // =====================================================
 
 type ExcelCell = {
@@ -1821,6 +1822,42 @@ function storefrontZip(files: { name: string; contents: string }[]): Uint8Array 
   return out;
 }
 
+function packageExcelSheets(sheets: ExcelSheet[]): Uint8Array {
+  const contents = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+    + '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">'
+    + '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>'
+    + '<Default Extension="xml" ContentType="application/xml"/>'
+    + '<Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>'
+    + '<Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/>'
+    + sheets.map((_, i) => `<Override PartName="/xl/worksheets/sheet${i + 1}.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>`).join('')
+    + '</Types>';
+  const rootRels = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+    + '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+    + '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/>'
+    + '</Relationships>';
+  const workbook = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+    + '<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">'
+    + `<sheets>${sheets.map((s, i) => `<sheet name="${excelXml(s.name)}" sheetId="${i + 1}" r:id="rId${i + 1}"/>`).join('')}</sheets>`
+    + '<calcPr calcId="191029" fullCalcOnLoad="1"/>'
+    + '</workbook>';
+  const workbookRels = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+    + '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+    + sheets.map((_, i) => `<Relationship Id="rId${i + 1}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet${i + 1}.xml"/>`).join('')
+    + `<Relationship Id="rId${sheets.length + 1}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/>`
+    + '</Relationships>';
+  return storefrontZip([
+    { name: '[Content_Types].xml', contents },
+    { name: '_rels/.rels', contents: rootRels },
+    { name: 'xl/workbook.xml', contents: workbook },
+    { name: 'xl/_rels/workbook.xml.rels', contents: workbookRels },
+    { name: 'xl/styles.xml', contents: storefrontStylesXml() },
+    ...sheets.map((sheet, i) => ({
+      name: `xl/worksheets/sheet${i + 1}.xml`,
+      contents: storefrontSheetXml(sheet),
+    })),
+  ]);
+}
+
 function storefrontXlsx(project: Project, totals: Totals): Uint8Array {
   if (!hasExportableCalculations(project, totals)) throw new Error("Complete each unit's dimensions, costs and gross net profit % before exporting Excel.");
   const sheets: ExcelSheet[] = [];
@@ -2011,39 +2048,198 @@ function storefrontXlsx(project: Project, totals: Totals): Uint8Array {
     }
   });
 
-  const contents = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
-    + '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">'
-    + '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>'
-    + '<Default Extension="xml" ContentType="application/xml"/>'
-    + '<Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>'
-    + '<Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/>'
-    + sheets.map((_, i) => `<Override PartName="/xl/worksheets/sheet${i + 1}.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>`).join('')
-    + '</Types>';
-  const rootRels = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
-    + '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
-    + '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/>'
-    + '</Relationships>';
-  const workbook = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
-    + '<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">'
-    + `<sheets>${sheets.map((s, i) => `<sheet name="${excelXml(s.name)}" sheetId="${i + 1}" r:id="rId${i + 1}"/>`).join('')}</sheets>`
-    + '<calcPr calcId="191029" fullCalcOnLoad="1"/>'
-    + '</workbook>';
-  const workbookRels = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
-    + '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
-    + sheets.map((_, i) => `<Relationship Id="rId${i + 1}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet${i + 1}.xml"/>`).join('')
-    + `<Relationship Id="rId${sheets.length + 1}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/>`
-    + '</Relationships>';
-  return storefrontZip([
-    { name: '[Content_Types].xml', contents },
-    { name: '_rels/.rels', contents: rootRels },
-    { name: 'xl/workbook.xml', contents: workbook },
-    { name: 'xl/_rels/workbook.xml.rels', contents: workbookRels },
-    { name: 'xl/styles.xml', contents: storefrontStylesXml() },
-    ...sheets.map((sheet, i) => ({
-      name: `xl/worksheets/sheet${i + 1}.xml`,
-      contents: storefrontSheetXml(sheet),
-    })),
-  ]);
+  return packageExcelSheets(sheets);
+}
+
+// Simple Excel report for Windows, Curtain Walls and Office Fit-Out.
+// Storefront retains its specialized county and manufacturer surcharge formulas.
+// Base manual costs are exported as typed values, and calculated costs use short,
+// visible formulas. Non-Storefront rates mirror calculate() exactly.
+function workspaceXlsx(project: Project, totals: Totals, workspace: Workspace): Uint8Array {
+  if (workspace === 'storefront') return storefrontXlsx(project, totals);
+  if (!hasExportableCalculations(project, totals)) {
+    throw new Error("Complete each unit's dimensions, costs and gross net profit % before exporting Excel.");
+  }
+
+  const p = project.pricing;
+  const workspaceName = WORKSPACE_NAMES[workspace];
+  const unitTitle = UNIT_NAMES[workspace].one;
+  const sheets: ExcelSheet[] = [];
+  const overview = newExcelSheet(`${workspaceName} Summary`);
+  sheets.push(overview);
+  const unitNames = totals.lines.map((_, i) => `Unit ${i + 1}`);
+  const totalRef = (row: number) =>
+    `SUM(${unitNames.map(name => `'${name}'!B${row}`).join(',')})`;
+
+  excelText(overview, 'A1', `ASPECT GLASSWORK  |  ${workspaceName.toUpperCase()} ESTIMATE`, 1);
+  overview.merges.push('A1:C1');
+  excelText(overview, 'A2', project.projectName.trim() || `Untitled ${workspaceName} Draft`, 2);
+  overview.merges.push('A2:C2');
+  excelText(overview, 'A3', 'Estimate Number', 28);
+  excelText(overview, 'B3', project.estimateNumber.trim() || 'Unnumbered Draft', 29);
+  excelText(overview, 'A4', 'Client / Contractor', 28);
+  excelText(overview, 'B4', project.clientName || 'Not specified', 29);
+  overview.merges.push('B4:C4');
+  excelText(overview, 'A5', 'Framing System / Finish', 28);
+  excelText(overview, 'B5', `${project.framingSystem || 'Not specified'} / ${project.finish || 'Not specified'}`, 29);
+  overview.merges.push('B5:C5');
+
+  const summaryRows: [number, string, number, 'price' | 'final' | 'plain' | 'subtotal' | 'opex' | 'risk' | 'total' | 'net' | 'percent'][] = [
+    [6, 'Price', totals.price, 'price'],
+    [7, 'CC Surcharge + Commission', totals.finalPrice, 'final'],
+    [9, 'Cost of Hardware', totals.hardwareCost, 'plain'],
+    [10, 'Total Hardware Cost', totals.totalHardwareCost, 'subtotal'],
+    [12, 'Cost of Glass', totals.glassCost, 'plain'],
+    [13, 'Total Glass Cost', totals.totalGlassCost, 'subtotal'],
+    [15, 'OPEX', totals.opex, 'opex'],
+    [16, 'Risk', totals.risk, 'risk'],
+    [17, 'Total Cost', totals.totalCost, 'total'],
+    [19, '(gross) Net $', totals.grossNet, 'net'],
+    [21, '(gross) Net Profit %', totals.price > 0 ? totals.grossNet / totals.price : 0, 'percent'],
+  ];
+  for (const [row, label, cached, kind] of summaryRows) {
+    storefrontSummaryRow(overview, row, label,
+      kind === 'percent' ? 'IFERROR(B19/B6,0)' : totalRef(row), cached, kind);
+  }
+  excelText(overview, 'C7', 'CC surcharge only; no separate commission is modeled.', 30);
+  excelText(overview, 'A23', `${workspaceName.toUpperCase()} UNIT REGISTER`, 21);
+  overview.merges.push('A23:C23');
+  excelText(overview, 'A24', workspace === 'windows' ? 'Window Mark / Type' : 'Unit Mark / Type', 31);
+  excelText(overview, 'B24', 'Final Price with CC', 31);
+  excelText(overview, 'C24', 'Worksheet', 31);
+  totals.lines.forEach((line, i) => {
+    const row = 25 + i;
+    const typeName = workspace === 'windows'
+      ? displayWindowType(line.opening)
+      : formatOpeningType(line.opening.openingType);
+    excelText(overview, `A${row}`, `${line.opening.mark} — ${typeName}`, 23);
+    excelFormula(overview, `B${row}`, `'${unitNames[i]}'!B7`, line.finalPrice ?? 0, 4);
+    excelText(overview, `C${row}`, unitNames[i], 27);
+  });
+  const noteRow = 27 + totals.lines.length;
+  excelText(overview, `A${noteRow}`, 'Editable inputs, simple formulas, and adjustment rates are in each Unit worksheet.', 30);
+  overview.merges.push(`A${noteRow}:C${noteRow}`);
+  excelText(overview, `A${noteRow + 1}`, 'Amounts follow the existing workspace calculations; no material waste allowance.', 30);
+  overview.merges.push(`A${noteRow + 1}:C${noteRow + 1}`);
+  if (!totals.complete) {
+    const draftRow = noteRow + 3;
+    excelText(overview, `A${draftRow}`, 'PRELIMINARY DRAFT — VERIFY INPUTS BEFORE QUOTING', 21);
+    overview.merges.push(`A${draftRow}:C${draftRow}`);
+    totals.errors.forEach((error, i) => {
+      excelText(overview, `A${draftRow + i + 1}`, `Review: ${error}`, 30);
+      overview.merges.push(`A${draftRow + i + 1}:C${draftRow + i + 1}`);
+    });
+  }
+
+  totals.lines.forEach((line, index) => {
+    const o = line.opening;
+    const sheet = newExcelSheet(unitNames[index]);
+    sheets.push(sheet);
+    excelText(sheet, 'A1', `ASPECT GLASSWORK  |  ${unitTitle.toUpperCase()}`, 1);
+    sheet.merges.push('A1:C1');
+    excelText(sheet, 'A2', `${project.projectName.trim() || `Untitled ${workspaceName} Draft`}  |  ${o.mark}`, 2);
+    sheet.merges.push('A2:C2');
+    excelText(sheet, 'A3', 'Estimate Number', 28);
+    excelText(sheet, 'B3', project.estimateNumber.trim() || 'Unnumbered Draft', 29);
+    excelText(sheet, 'A4', workspace === 'windows' ? 'Window / Type' : 'Opening / Unit', 28);
+    const typeName = workspace === 'windows'
+      ? displayWindowType(o)
+      : formatOpeningType(o.openingType);
+    excelText(sheet, 'B4', `${o.mark} — ${typeName}`, 29);
+    sheet.merges.push('B4:C4');
+    excelText(sheet, 'A5', 'Frame System / Finish', 28);
+    excelText(sheet, 'B5', `${project.framingSystem || 'Unspecified'} / ${project.finish || 'Unspecified'}`, 29);
+    sheet.merges.push('B5:C5');
+
+    const result = (
+      row: number, label: string, formula: string, cached: number,
+      kind: 'price' | 'final' | 'plain' | 'subtotal' | 'opex' | 'risk' | 'total' | 'net' | 'percent'
+    ) => storefrontSummaryRow(sheet, row, label, formula, cached, kind);
+    const base = (row: number, label: string, cached: number, formula?: string) => {
+      excelText(sheet, `A${row}`, label, 3);
+      if (formula) excelFormula(sheet, `B${row}`, formula, cached, 4);
+      else excelNumber(sheet, `B${row}`, cached, 25);
+    };
+    const setting = (row: number, label: string, value: number, explanation: string, style = 26) => {
+      excelText(sheet, `A${row}`, label, 23);
+      excelNumber(sheet, `B${row}`, value, style);
+      excelText(sheet, `C${row}`, explanation, 30);
+    };
+    const infoNumber = (row: number, label: string, value: number, explanation: string, style = 24) => {
+      excelText(sheet, `A${row}`, label, 23);
+      excelNumber(sheet, `B${row}`, value, style);
+      excelText(sheet, `C${row}`, explanation, 30);
+    };
+    const infoText = (row: number, label: string, value: string, explanation: string) => {
+      excelText(sheet, `A${row}`, label, 23);
+      excelText(sheet, `B${row}`, value, 27);
+      excelText(sheet, `C${row}`, explanation, 30);
+    };
+
+    result(6, 'Price', 'B17/(1-B20)', line.price ?? 0, 'price');
+    result(7, 'CC Surcharge + Commission', 'B6*(1+B27)', line.finalPrice ?? 0, 'final');
+    excelText(sheet, 'C7', 'CC surcharge only; no separate commission is modeled.', 30);
+
+    base(9, `Cost of Hardware${o.hardwareMode === 'manual' ? ' [manual]' : ' [calculated]'}`,
+      line.hardwareCost,
+      o.hardwareMode === 'calculated' ? 'B36*B43+(B46+B47)*B32' : undefined);
+    result(10, 'Total Hardware Cost', '(B9+B23)*(1+B24)', line.totalHardwareCost, 'subtotal');
+    base(12, `Cost of Glass${o.glassMode === 'manual' ? ' [manual]' : ' [calculated]'}`,
+      line.glassCost, o.glassMode === 'calculated' ? 'B35*B42' : undefined);
+    result(13, 'Total Glass Cost', 'B12*(1-B25)', line.totalGlassCost, 'subtotal');
+
+    excelText(sheet, 'A15', 'OPEX [manual]', 11);
+    excelNumber(sheet, 'B15', line.opex, 12);
+    result(16, 'Risk', 'B13*B26', line.risk, 'risk');
+    result(17, 'Total Cost', 'SUM(B10,B13,B15,B16)', line.totalCost, 'total');
+    result(19, '(gross) Net $', 'B6-B17', line.grossNet ?? 0, 'net');
+    excelText(sheet, 'A20', '(gross) Net Profit % [manual]', 19);
+    excelNumber(sheet, 'B20', (o.targetGrossNetPct ?? 0) / 100, 20);
+
+    excelText(sheet, 'A22', `${workspaceName.toUpperCase()} ADJUSTMENT RATES  |  EDITABLE`, 21);
+    sheet.merges.push('A22:C22');
+    setting(23, 'Fixed Hardware Fee $ / Unit', p.hardwareFixedFee, 'One fixed hardware fee per opening mark, not per assembly', 25);
+    setting(24, 'Hardware Tax %', p.hardwareTaxPct / 100, 'Tax on hardware cost plus the fixed fee');
+    setting(25, 'Glass Discount %', p.glassDiscountPct / 100, 'Deducted from base glass cost in this workspace');
+    setting(26, 'Risk %', p.riskPct / 100, 'Applied to total glass cost');
+    setting(27, 'CC Surcharge %', p.ccSurchargePct / 100, 'Applied to price before CC');
+
+    excelText(sheet, 'A30', 'UNIT DETAILS  |  ORIGINAL INPUTS', 21);
+    sheet.merges.push('A30:C30');
+    excelText(sheet, 'A31', 'Glass Specification', 28);
+    excelText(sheet, 'B31', `${o.glassSpecification} (${o.glassStyle})`, 29);
+    sheet.merges.push('B31:C31');
+    infoNumber(32, 'Quantity', o.quantity, 'Number of assemblies; total prices already include quantity', 32);
+    infoNumber(33, 'Width (in)', line.width, 'Dimensions at export');
+    infoNumber(34, 'Height (in)', line.height, 'Dimensions at export');
+    infoNumber(35, 'Glass Area (SF)', line.glassSF, 'Current app-calculated glass area snapshot', 33);
+    infoNumber(36, 'Frame Length (LF)', line.frameLF, 'Current app-calculated frame length snapshot', 33);
+    infoText(37, 'Glass Costing Mode', o.glassMode, 'Calculated SF rate or manual per-assembly cost');
+    infoText(38, 'Hardware Costing Mode', o.hardwareMode, 'Calculated LF rate or manual per-assembly cost');
+    infoNumber(39, 'Manual Glass Cost / Assembly', o.manualGlassCostEach, 'Exact typed amount; used when mode is manual', 25);
+    infoNumber(40, 'Manual Hardware Cost / Assembly', o.manualHardwareCostEach, 'Exact typed amount; used when mode is manual', 25);
+    infoNumber(41, 'OPEX / Assembly', o.opexPerAssembly, 'Exact typed amount; used in overall OPEX', 25);
+    infoNumber(42, 'Glass Rate ($/SF)', line.glassRate, 'Current app rate when mode is calculated', 25);
+    infoNumber(43, 'Frame Rate ($/LF)', line.frameRate, 'Current app rate when mode is calculated', 25);
+    infoNumber(44, 'Glazing Columns', o.columns, 'Snapshot of glass layout', 32);
+    infoNumber(45, 'Glazing Rows', o.rows, 'Snapshot of glass layout', 32);
+    infoNumber(46, 'Door Package / Assembly', line.doorRate, 'For calculated hardware when applicable', 25);
+    infoNumber(47, 'Hardware Allowance / Assembly', o.hardwareAllowance, 'For calculated hardware when applicable', 25);
+
+    excelText(sheet, 'A50', 'Manual costs are direct editable numbers; calculated costs use simple formulas.', 30);
+    sheet.merges.push('A50:C50');
+    excelText(sheet, 'A51', 'Hardware = (hardware cost + fixed fee) × (1 + hardware tax).', 30);
+    sheet.merges.push('A51:C51');
+    excelText(sheet, 'A52', 'Glass = base glass cost × (1 - glass discount); risk = total glass cost × risk %.', 30);
+    sheet.merges.push('A52:C52');
+    excelText(sheet, 'A53', 'Width, height, SF and LF are snapshots; re-export to update geometry.', 30);
+    sheet.merges.push('A53:C53');
+    if (!totals.complete) {
+      excelText(sheet, 'A55', 'PRELIMINARY DRAFT — REVIEW PROJECT VALIDATION BEFORE QUOTING', 21);
+      sheet.merges.push('A55:C55');
+    }
+  });
+  return packageExcelSheets(sheets);
 }
 
 function downloadStorefrontXlsx(name: string, bytes: Uint8Array): void {
@@ -3635,22 +3831,22 @@ export default function Home() {
     }
   }
 
-  // Storefront-only Excel workbook with simple formulas and direct base amounts.
-  // This is additive; existing Takeoff CSV remains unchanged.
-  function exportStorefrontExcel(): void {
-    if (workspace !== 'storefront') return;
+  // Excel export is available in all four workspaces.
+  // Storefront retains its specialized formulas; other workspaces mirror
+  // their existing hardware-tax and glass-discount computations.
+  function exportWorkspaceExcel(): void {
     if (!exportReady) {
       setNotice('Complete the dimensions, costing and target gross net profit % for every unit before exporting Excel.');
       return;
     }
     try {
-      const bytes = storefrontXlsx(project, totals);
+      const bytes = workspaceXlsx(project, totals, workspace);
       downloadStorefrontXlsx(
-        `${totals.complete ? '' : 'draft-'}storefront-${safeName(project.estimateNumber)}-estimate.xlsx`,
+        `${totals.complete ? '' : 'draft-'}${workspace}-${safeName(project.estimateNumber)}-estimate.xlsx`,
         bytes
       );
       if (!totals.complete) {
-        setNotice('Preliminary Excel draft exported. Review the validation warnings in the Storefront Summary sheet before quoting.');
+        setNotice(`Preliminary Excel draft exported. Review the validation warnings in the ${WORKSPACE_NAMES[workspace]} Summary sheet before quoting.`);
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Excel export failed.';
@@ -3735,7 +3931,7 @@ export default function Home() {
         <div className="topbar-right">
           <span className="top-pill">
             <span className="green-dot" />
-            Browser-based · V1.7.18
+            Browser-based · V1.7.19
           </span>
 
           <span className="autosave">
@@ -3840,7 +4036,7 @@ export default function Home() {
 
           <div className="sidebar-help">
             <strong>
-              Estimator V1.7.18
+              Estimator V1.7.19
             </strong>
 
             <p>
@@ -5549,15 +5745,13 @@ export default function Home() {
                     Export Takeoff CSV ↗
                   </button>
 
-                  {workspace === 'storefront' && (
-                    <button
-                      className="summary-secondary"
-                      onClick={exportStorefrontExcel}
-                      disabled={!exportReady}
-                    >
-                      Export Storefront Excel (.xlsx) ↗
-                    </button>
-                  )}
+                  <button
+                    className="summary-secondary"
+                    onClick={exportWorkspaceExcel}
+                    disabled={!exportReady}
+                  >
+                    Export {WORKSPACE_NAMES[workspace]} Excel (.xlsx) ↗
+                  </button>
 
                   {exportReady && !totals.complete && (
                     <p style={{ color: '#D3E9FB', fontSize: 12, lineHeight: 1.5, margin: '8px 16px 0' }}>
@@ -6852,7 +7046,7 @@ export default function Home() {
 
           <footer className="footer">
             <span>
-              Aspect Glasswork · V1.7.18
+              Aspect Glasswork · V1.7.19
             </span>
 
             <span>
