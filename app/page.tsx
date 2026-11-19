@@ -21,7 +21,7 @@ import type {
   StorefrontOpening,
 } from '../lib/types';
 
-// ASPECT GLASSWORK ESTIMATING STUDIO V1.7.17
+// ASPECT GLASSWORK ESTIMATING STUDIO V1.7.18
 // Blue and white theme, 13 Storefront glass specs, 8 Windows glass specs,
 // 20 Windows-only window types; unnumbered framing and door dropdowns.
 // Storefront framing AND door models now have an Other choice with a custom
@@ -30,10 +30,12 @@ import type {
 // New estimates in all workspaces prompt for Frame Finish; saved finishes are kept.
 // All workspaces support custom frame finishes; calculations are unchanged.
 // Existing estimating formulas, saved projects and model dropdowns are retained.
-// V1.7.17: Storefront-only county hardware markup and manufacturer-adjusted glass tax.
+// V1.7.18: Corrected Storefront manufacturer surcharge (+) and glass sales tax (+).
 // County: Rockland 15%; Orange 20-25%; Sullivan 25-30%; Other custom rate.
-// Storefront glass: cost × (1 − manufacturer adjustment) × (1 + glass sales tax).
+// Storefront glass: cost × (1 + manufacturer surcharge) × (1 + glass sales tax).
 // Live breakdown, CSV and simple Excel formulas use the same Storefront computation.
+// For saved-estimate compatibility, Storefront keeps its surcharge in the legacy
+// glassDiscountPct data field; non-Storefront discounts remain unchanged.
 // Other workspaces retain their existing calculation formulas and settings.
 
 // =====================================================
@@ -1029,7 +1031,7 @@ function freshFor(
   if (workspace === 'storefront') {
     project.pricing.storefrontCounty = '';
     project.pricing.storefrontCountyRatePct = null;
-    project.pricing.glassDiscountPct = 15.725; // manufacturer adjustment, deducted
+    project.pricing.glassDiscountPct = 15.725; // Storefront manufacturer surcharge (added)
     project.pricing.storefrontGlassSalesTaxPct = 8.875;
     project.pricing.riskPct = 10;
     project.pricing.ccSurchargePct = 8.5;
@@ -1101,7 +1103,7 @@ function calculate(
 
   for (const [name, value] of [
     ['Hardware tax', p.hardwareTaxPct],
-    ['Glass discount', p.glassDiscountPct],
+    [workspace === 'storefront' ? 'Glass manufacturer surcharge' : 'Glass discount', p.glassDiscountPct],
     ['Risk', p.riskPct],
     ['CC surcharge', p.ccSurchargePct],
   ] as [string, number][]) {
@@ -1309,7 +1311,7 @@ function calculate(
 
     // Storefront-only computation supplied by Aspect Glasswork:
     // hardware × (1 + county markup)
-    // glass × (1 - manufacturer adjustment) × (1 + glass sales tax)
+    // glass × (1 + manufacturer surcharge) × (1 + glass sales tax)
     // Other workspaces retain the previous fixed-fee, tax and discount rules.
     if (workspace === 'storefront' && (
       countyRate === null ||
@@ -1329,7 +1331,7 @@ function calculate(
       : (hardwareCost + p.hardwareFixedFee) * (1 + p.hardwareTaxPct / 100);
 
     const totalGlassCost = workspace === 'storefront'
-      ? glassCost * (1 - p.glassDiscountPct / 100) *
+      ? glassCost * (1 + p.glassDiscountPct / 100) *
         (1 + p.storefrontGlassSalesTaxPct / 100)
       : glassCost * (1 - p.glassDiscountPct / 100);
 
@@ -1905,7 +1907,7 @@ function storefrontXlsx(project: Project, totals: Totals): Uint8Array {
     excelText(sheet, 'B5', `${project.framingSystem || 'Unspecified'} / ${project.finish || 'Unspecified'}`, 29);
     sheet.merges.push('B5:C5');
 
-    // Simple, spreadsheet-friendly format approved for V1.7.17.
+    // Simple, spreadsheet-friendly format; Storefront rates updated for V1.7.18.
     // Base amounts are VALUES (not complicated formulas). All derived rows
     // use short formulas pointing to nearby, plainly labeled settings.
     // This preserves the application's live pricing exactly at export time.
@@ -1938,7 +1940,7 @@ function storefrontXlsx(project: Project, totals: Totals): Uint8Array {
 
     baseAmount(12, `Cost of Glass${o.glassMode === 'manual' ? ' [manual]' : ' [calculated]'}`,
       l.glassCost, 'plain', o.glassMode === 'calculated' ? 'B35*B42' : undefined);
-    r(13, 'Total Glass Cost', 'B12*(1-B25)*(1+B26)', l.totalGlassCost, 'subtotal');
+    r(13, 'Total Glass Cost', 'B12*(1+B25)*(1+B26)', l.totalGlassCost, 'subtotal');
 
     baseAmount(15, 'OPEX [manual]', l.opex, 'opex');
     r(16, 'Risk', 'B13*B27', l.risk, 'risk');
@@ -1958,8 +1960,8 @@ function storefrontXlsx(project: Project, totals: Totals): Uint8Array {
     excelText(sheet, 'A23', 'County', 23);
     excelText(sheet, 'B23', p.storefrontCounty || 'Not selected', 27);
     setting(24, 'County Hardware Markup %', (storefrontCountyRate(p) ?? 0) / 100, 26, 'Rockland 15%; Orange 20-25%; Sullivan 25-30%; Other custom');
-    setting(25, 'Glass Manufacturer Deduction %', p.glassDiscountPct / 100, 26, 'Deducted from base glass cost (15.725% default)');
-    setting(26, 'Glass Sales Tax %', p.storefrontGlassSalesTaxPct / 100, 26, 'Applied after manufacturer adjustment (8.875% default)');
+    setting(25, 'Glass Manufacturer Surcharge %', p.glassDiscountPct / 100, 26, 'Added to base glass cost; edit for each manufacturer (15.725% default)');
+    setting(26, 'Glass Sales Tax %', p.storefrontGlassSalesTaxPct / 100, 26, 'Applied after manufacturer surcharge (8.875% default)');
     setting(27, 'Risk %', p.riskPct / 100, 26, 'Applied to total glass cost');
     setting(28, 'CC Surcharge %', p.ccSurchargePct / 100, 26, 'Applied to price before CC');
 
@@ -1999,7 +2001,7 @@ function storefrontXlsx(project: Project, totals: Totals): Uint8Array {
     sheet.merges.push('A50:C50');
     excelText(sheet, 'A51', 'Width, height, glass SF and frame LF are snapshots; re-export if geometry or quantity changes.', 30);
     sheet.merges.push('A51:C51');
-    excelText(sheet, 'A52', 'Storefront: hardware × county markup; glass × (1 - manufacturer adjustment) × (1 + sales tax).', 30);
+    excelText(sheet, 'A52', 'Storefront: hardware × county markup; glass × (1 + manufacturer surcharge) × (1 + sales tax).', 30);
     sheet.merges.push('A52:C52');
     excelText(sheet, 'A53', 'The app is the source of truth; no material waste allowance is included.', 30);
     sheet.merges.push('A53:C53');
@@ -2399,7 +2401,7 @@ function Worksheet({
         formula={
           workspace === 'storefront'
             ? `${currency(l.glassCost)} × ` +
-              `(1 − ${pct(p.glassDiscountPct)}% manufacturer adjustment) × ` +
+              `(1 + ${pct(p.glassDiscountPct)}% manufacturer surcharge) × ` +
               `(1 + ${pct(p.storefrontGlassSalesTaxPct)}% glass sales tax)`
             : `${currency(l.glassCost)} × ` +
               `(1 − ${pct(p.glassDiscountPct)}%)`
@@ -3733,7 +3735,7 @@ export default function Home() {
         <div className="topbar-right">
           <span className="top-pill">
             <span className="green-dot" />
-            Browser-based · V1.7.17
+            Browser-based · V1.7.18
           </span>
 
           <span className="autosave">
@@ -3838,7 +3840,7 @@ export default function Home() {
 
           <div className="sidebar-help">
             <strong>
-              Estimator V1.7.17
+              Estimator V1.7.18
             </strong>
 
             <p>
@@ -4416,7 +4418,7 @@ export default function Home() {
                   {workspace === 'storefront' && (
                     <div className="formula-panel" style={{ marginTop: 18 }}>
                       <strong>Storefront Pricing Adjustments</strong>
-                      <p>These rates affect Storefront units only. The county rate applies to hardware; the manufacturer adjustment and glass sales tax apply to glass.</p>
+                      <p>These rates affect Storefront units only. The county rate applies to hardware; the manufacturer surcharge and glass sales tax are added to glass cost.</p>
                       <div className="form-grid" style={{ marginTop: 12 }}>
                         <Field label="County / Hardware Markup">
                           <select
@@ -4461,20 +4463,20 @@ export default function Home() {
                             )}
                           </Field>
                         )}
-                        <Field label="Glass Manufacturer Adjustment / Deduction (%)"
-                          hint="Deducted from base glass cost: 15.725% means Cost × (1 − 0.15725).">
+                        <Field label="Glass Manufacturer Surcharge (%)"
+                          hint="Added to the base glass cost. Enter the applicable manufacturer surcharge; 15.725% means Cost × (1 + 0.15725).">
                           <Num value={p.glassDiscountPct} max={100} step={0.001}
                             onChange={v => setRule('glassDiscountPct', v)} />
                         </Field>
                         <Field label="Glass Sales Tax (%)"
-                          hint="Applied after manufacturer adjustment; default 8.875%.">
+                          hint="Applied after manufacturer surcharge; default 8.875%.">
                           <Num value={p.storefrontGlassSalesTaxPct} max={100} step={0.001}
                             onChange={v => setRule('storefrontGlassSalesTaxPct', v)} />
                         </Field>
                       </div>
                       <p style={{ fontSize: 12 }}>
                         Total Hardware = Hardware Cost × (1 + County Rate).<br />
-                        Total Glass = Glass Cost × (1 − Manufacturer Adjustment) × (1 + Glass Sales Tax).<br />
+                        Total Glass = Glass Cost × (1 + Manufacturer Surcharge) × (1 + Glass Sales Tax).<br />
                         Risk = Total Glass Cost × {pct(p.riskPct)}%.
                       </p>
                     </div>
@@ -6335,7 +6337,7 @@ export default function Home() {
                             <Field label="County hardware markup %" hint={`Selected county: ${p.storefrontCounty || 'Not selected'}. Set the county and markup in Storefront Project Information.`}>
                               <input className="input" readOnly value={storefrontCountyRate(p) === null ? 'Select county in project details' : `${storefrontCountyRate(p)}%`} />
                             </Field>
-                            <Field label="Glass manufacturer adjustment / deduction (%)">
+                            <Field label="Glass manufacturer surcharge (%)" hint="Editable by manufacturer; 15.725% default, applied as (1 + rate).">
                               <Num value={p.glassDiscountPct} max={100} step={0.001}
                                 onChange={v => setRule('glassDiscountPct', v)} />
                             </Field>
@@ -6850,7 +6852,7 @@ export default function Home() {
 
           <footer className="footer">
             <span>
-              Aspect Glasswork · V1.7.17
+              Aspect Glasswork · V1.7.18
             </span>
 
             <span>
