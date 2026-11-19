@@ -21,7 +21,7 @@ import type {
   StorefrontOpening,
 } from '../lib/types';
 
-// ASPECT GLASSWORK ESTIMATING STUDIO V1.7.13
+// ASPECT GLASSWORK ESTIMATING STUDIO V1.7.14
 // Blue and white theme, 13 Storefront glass specs, 8 Windows glass specs,
 // 20 Windows-only window types; unnumbered framing and door dropdowns.
 // Storefront framing AND door models now have an Other choice with a custom
@@ -30,6 +30,7 @@ import type {
 // New estimates in all workspaces prompt for Frame Finish; saved finishes are kept.
 // All workspaces support custom frame finishes; calculations are unchanged.
 // Existing estimating formulas, saved projects and model dropdowns are retained.
+// New: Storefront-only formula-driven, navy-and-blue Excel (.xlsx) export; CSV unchanged.
 
 // =====================================================
 // WORKSPACES
@@ -1433,6 +1434,477 @@ function csvCell(
   }
 
   return `"${s.replace(/"/g, '""')}"`;
+}
+
+
+// =====================================================
+// STOREFRONT EXCEL EXPORT (dependency-free XLSX)
+// Uses native OOXML + ZIP to avoid requiring a new npm package.
+// Storefront only; all amounts & formulas follow calculate().
+// =====================================================
+
+type ExcelCell = {
+  address: string;
+  style?: number;
+  text?: string;
+  number?: number;
+  formula?: string;
+  cached?: number;
+};
+
+type ExcelSheet = {
+  name: string;
+  cells: ExcelCell[];
+  merges: string[];
+};
+
+function excelXml(value: string): string {
+  return value
+    .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F]/g, '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&apos;');
+}
+
+function newExcelSheet(name: string): ExcelSheet {
+  return { name, cells: [], merges: [] };
+}
+
+function excelText(sheet: ExcelSheet, address: string, text: string, style = 0): void {
+  sheet.cells.push({ address, text, style });
+}
+
+function excelNumber(sheet: ExcelSheet, address: string, value: number, style = 0): void {
+  sheet.cells.push({ address, number: Number.isFinite(value) ? value : 0, style });
+}
+
+function excelFormula(
+  sheet: ExcelSheet,
+  address: string,
+  formula: string,
+  cached: number,
+  style = 0
+): void {
+  sheet.cells.push({
+    address,
+    formula: formula.replace(/^=/, ''),
+    cached: Number.isFinite(cached) ? cached : 0,
+    style,
+  });
+}
+
+function storefrontSummaryRow(
+  sheet: ExcelSheet,
+  row: number,
+  label: string,
+  formula: string,
+  value: number,
+  kind: 'price' | 'final' | 'plain' | 'subtotal' | 'opex' |
+    'risk' | 'total' | 'net' | 'percent' = 'plain'
+): void {
+  const styles: Record<typeof kind, [number, number]> = {
+    price: [5, 6],
+    final: [7, 8],
+    plain: [3, 4],
+    subtotal: [9, 10],
+    opex: [11, 12],
+    risk: [13, 14],
+    total: [15, 16],
+    net: [17, 18],
+    percent: [19, 20],
+  };
+  const [labelStyle, valueStyle] = styles[kind];
+  excelText(sheet, `A${row}`, label, labelStyle);
+  excelFormula(sheet, `B${row}`, formula, value, valueStyle);
+}
+
+const STOREFRONT_MONEY_FORMAT = '"$"#,##0.00;[Red]("$"#,##0.00)';
+
+function storefrontStylesXml(): string {
+  // Custom formats: 164 money, 165 percent, 166 integer, 167 4 decimals.
+  const fonts = [
+    '<font><sz val="11"/><color rgb="FF102B4E"/><name val="Aptos"/></font>',
+    '<font><b/><sz val="16"/><color rgb="FFFFFFFF"/><name val="Aptos Display"/></font>',
+    '<font><b/><sz val="11"/><color rgb="FFFFFFFF"/><name val="Aptos"/></font>',
+    '<font><b/><sz val="11"/><color rgb="FF102B4E"/><name val="Aptos"/></font>',
+    '<font><b/><sz val="11"/><color rgb="FFFFFFFF"/><name val="Aptos"/></font>',
+    '<font><b/><sz val="11"/><color rgb="FF1766A4"/><name val="Aptos"/></font>',
+    '<font><sz val="11"/><color rgb="FF102B4E"/><name val="Aptos"/></font>',
+    '<font><i/><sz val="10"/><color rgb="FF637F99"/><name val="Aptos"/></font>',
+  ];
+  const fills = [
+    '<fill><patternFill patternType="none"/></fill>',
+    '<fill><patternFill patternType="gray125"/></fill>',
+    ...[
+      '102B4E', // 2 navy
+      '1766A4', // 3 brand blue
+      '2C90CB', // 4 sky
+      'EAF4FD', // 5 light blue
+      'F4F8FC', // 6 white-blue background
+      'FFFFFF', // 7 white
+      'D3E9FB', // 8 net pale blue
+    ].map(color => `<fill><patternFill patternType="solid"><fgColor rgb="FF${color}"/><bgColor indexed="64"/></patternFill></fill>`),
+  ];
+  const borders = [
+    '<border><left/><right/><top/><bottom/><diagonal/></border>',
+    '<border><left style="thin"><color rgb="FFD7E5F1"/></left><right style="thin"><color rgb="FFD7E5F1"/></right><top style="thin"><color rgb="FFD7E5F1"/></top><bottom style="thin"><color rgb="FFD7E5F1"/></bottom><diagonal/></border>',
+  ];
+  type Style = [number, number, number, number];
+  const styles: Style[] = [
+    [0, 0, 0, 0],     // 0 normal
+    [1, 2, 0, 0],     // 1 title
+    [2, 3, 0, 0],     // 2 subtitle
+    [0, 7, 1, 0],     // 3 label
+    [0, 7, 1, 164],   // 4 money
+    [3, 5, 1, 0],     // 5 price label
+    [3, 5, 1, 164],   // 6 price value
+    [4, 3, 1, 0],     // 7 final label
+    [4, 3, 1, 164],   // 8 final value
+    [3, 6, 1, 0],     // 9 subtotal label
+    [3, 6, 1, 164],   // 10 subtotal money
+    [4, 4, 1, 0],     // 11 opex label
+    [4, 4, 1, 164],   // 12 opex value
+    [3, 5, 1, 0],     // 13 risk label
+    [3, 5, 1, 164],   // 14 risk money
+    [4, 2, 1, 0],     // 15 total cost label
+    [4, 2, 1, 164],   // 16 total cost value
+    [3, 8, 1, 0],     // 17 net label
+    [3, 8, 1, 164],   // 18 net value
+    [4, 3, 1, 0],     // 19 margin label
+    [4, 3, 1, 165],   // 20 margin value
+    [4, 2, 0, 0],     // 21 section title
+    [4, 2, 0, 0],     // 22 section continuation
+    [0, 6, 1, 0],     // 23 input label
+    [0, 7, 1, 167],   // 24 numeric input
+    [0, 5, 1, 164],   // 25 money input
+    [0, 5, 1, 165],   // 26 percentage input
+    [0, 5, 1, 0],     // 27 text input
+    [3, 6, 1, 0],     // 28 meta label
+    [0, 7, 1, 0],     // 29 meta value
+    [7, 7, 0, 0],     // 30 note
+    [4, 3, 1, 0],     // 31 data-header
+    [0, 7, 1, 166],   // 32 integer input
+    [3, 5, 1, 167],   // 33 computed quantity
+  ];
+  return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>`
+    + `<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">`
+    + `<numFmts count="4"><numFmt numFmtId="164" formatCode="${excelXml(STOREFRONT_MONEY_FORMAT)}"/>`
+    + '<numFmt numFmtId="165" formatCode="0.0%"/>'
+    + '<numFmt numFmtId="166" formatCode="0"/>'
+    + '<numFmt numFmtId="167" formatCode="0.0000"/></numFmts>'
+    + `<fonts count="${fonts.length}">${fonts.join('')}</fonts>`
+    + `<fills count="${fills.length}">${fills.join('')}</fills>`
+    + `<borders count="${borders.length}">${borders.join('')}</borders>`
+    + '<cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>'
+    + `<cellXfs count="${styles.length}">`
+    + styles.map(([font, fill, border, numFmt], index) =>
+      `<xf numFmtId="${numFmt}" fontId="${font}" fillId="${fill}" borderId="${border}" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyNumberFormat="1">`
+      + `<alignment vertical="center" horizontal="${[4,6,8,10,12,14,16,18,20,24,25,26,32,33].includes(index) ? 'right' : 'left'}" wrapText="1"/>`
+      + '</xf>'
+    ).join('')
+    + '</cellXfs><cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles>'
+    + '</styleSheet>';
+}
+
+function storefrontSheetXml(sheet: ExcelSheet): string {
+  const rows = new Map<number, ExcelCell[]>();
+  for (const cell of sheet.cells) {
+    const matched = /([A-Z]+)(\d+)/.exec(cell.address);
+    if (!matched) continue;
+    const row = Number(matched[2]);
+    rows.set(row, [...(rows.get(row) ?? []), cell]);
+  }
+  function colIndex(address: string): number {
+    let n = 0;
+    for (const c of (address.match(/^[A-Z]+/)?.[0] ?? 'A')) {
+      n = n * 26 + (c.charCodeAt(0) - 64);
+    }
+    return n;
+  }
+  const rowXml = [...rows.entries()].sort((a, b) => a[0] - b[0]).map(([r, cells]) => {
+    const height = r === 1 ? 32 : r === 2 ? 27 : r === 23 ? 27 : 23;
+    return `<row r="${r}" ht="${height}" customHeight="1">`
+      + cells.sort((a, b) => colIndex(a.address) - colIndex(b.address)).map(c => {
+        const style = ` s="${c.style ?? 0}"`;
+        if (c.formula !== undefined) {
+          return `<c r="${c.address}"${style}><f>${excelXml(c.formula)}</f><v>${c.cached ?? 0}</v></c>`;
+        }
+        if (c.number !== undefined) {
+          return `<c r="${c.address}"${style}><v>${c.number}</v></c>`;
+        }
+        return `<c r="${c.address}"${style} t="inlineStr"><is><t xml:space="preserve">${excelXml(c.text ?? '')}</t></is></c>`;
+      }).join('') + '</row>';
+  }).join('');
+  const merges = sheet.merges.length
+    ? `<mergeCells count="${sheet.merges.length}">${sheet.merges.map(r => `<mergeCell ref="${r}"/>`).join('')}</mergeCells>`
+    : '';
+  return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>`
+    + '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">'
+    + '<sheetViews><sheetView showGridLines="0" workbookViewId="0">'
+    + '<pane ySplit="2" topLeftCell="A3" activePane="bottomLeft" state="frozen"/>'
+    + '</sheetView></sheetViews>'
+    + '<sheetFormatPr defaultRowHeight="22"/>'
+    + '<cols><col min="1" max="1" width="38" customWidth="1"/>'
+    + '<col min="2" max="2" width="25" customWidth="1"/>'
+    + '<col min="3" max="3" width="65" customWidth="1"/></cols>'
+    + `<sheetData>${rowXml}</sheetData>${merges}</worksheet>`;
+}
+
+function storefrontZip(files: { name: string; contents: string }[]): Uint8Array {
+  // Uncompressed ZIP entries (STORE) are supported by Excel and modern browsers.
+  // Avoids any XLSX dependency, external API call, or server-side operation.
+  const enc = new TextEncoder();
+  const entries = files.map(file => ({
+    name: enc.encode(file.name),
+    data: enc.encode(file.contents),
+  }));
+  const crcTable = new Uint32Array(256);
+  for (let n = 0; n < 256; n++) {
+    let c = n;
+    for (let k = 0; k < 8; k++) c = c & 1 ? 0xEDB88320 ^ (c >>> 1) : c >>> 1;
+    crcTable[n] = c >>> 0;
+  }
+  const crc = (bytes: Uint8Array): number => {
+    let c = 0xFFFFFFFF;
+    for (const b of bytes) c = crcTable[(c ^ b) & 0xFF] ^ (c >>> 8);
+    return (c ^ 0xFFFFFFFF) >>> 0;
+  };
+  const localSize = entries.reduce((a, e) => a + 30 + e.name.length + e.data.length, 0);
+  const centralSize = entries.reduce((a, e) => a + 46 + e.name.length, 0);
+  const out = new Uint8Array(localSize + centralSize + 22);
+  const view = new DataView(out.buffer);
+  let pos = 0;
+  const offsets: number[] = [];
+  const checksums: number[] = [];
+  entries.forEach(e => {
+    offsets.push(pos);
+    const checksum = crc(e.data);
+    checksums.push(checksum);
+    view.setUint32(pos, 0x04034B50, true);
+    view.setUint16(pos + 4, 20, true);
+    view.setUint16(pos + 6, 0, true);
+    view.setUint16(pos + 8, 0, true);
+    view.setUint32(pos + 14, checksum, true);
+    view.setUint32(pos + 18, e.data.length, true);
+    view.setUint32(pos + 22, e.data.length, true);
+    view.setUint16(pos + 26, e.name.length, true);
+    pos += 30;
+    out.set(e.name, pos); pos += e.name.length;
+    out.set(e.data, pos); pos += e.data.length;
+  });
+  const centralOffset = pos;
+  entries.forEach((e, i) => {
+    view.setUint32(pos, 0x02014B50, true);
+    view.setUint16(pos + 4, 20, true);
+    view.setUint16(pos + 6, 20, true);
+    view.setUint16(pos + 8, 0, true);
+    view.setUint16(pos + 10, 0, true);
+    view.setUint32(pos + 16, checksums[i], true);
+    view.setUint32(pos + 20, e.data.length, true);
+    view.setUint32(pos + 24, e.data.length, true);
+    view.setUint16(pos + 28, e.name.length, true);
+    view.setUint32(pos + 42, offsets[i], true);
+    pos += 46;
+    out.set(e.name, pos); pos += e.name.length;
+  });
+  const centralLength = pos - centralOffset;
+  view.setUint32(pos, 0x06054B50, true);
+  view.setUint16(pos + 8, entries.length, true);
+  view.setUint16(pos + 10, entries.length, true);
+  view.setUint32(pos + 12, centralLength, true);
+  view.setUint32(pos + 16, centralOffset, true);
+  return out;
+}
+
+function storefrontXlsx(project: Project, totals: Totals): Uint8Array {
+  if (!totals.complete) throw new Error('Finish the estimate before exporting Excel.');
+  const sheets: ExcelSheet[] = [];
+  const overview = newExcelSheet('Storefront Summary');
+  sheets.push(overview);
+  const unitNames = totals.lines.map((_, i) => `Unit ${i + 1}`);
+  const sumRefs = (row: number): string =>
+    `SUM(${unitNames.map(name => `'${name}'!B${row}`).join(',')})`;
+
+  excelText(overview, 'A1', 'ASPECT GLASSWORK  |  STOREFRONT ESTIMATE', 1);
+  overview.merges.push('A1:C1');
+  excelText(overview, 'A2', project.projectName, 2);
+  overview.merges.push('A2:C2');
+  excelText(overview, 'A3', 'Estimate Number', 28);
+  excelText(overview, 'B3', project.estimateNumber, 29);
+  excelText(overview, 'A4', 'Client / Contractor', 28);
+  excelText(overview, 'B4', project.clientName || 'Not specified', 29);
+  overview.merges.push('B4:C4');
+  excelText(overview, 'A5', 'Framing System', 28);
+  excelText(overview, 'B5', project.framingSystem || 'Not specified', 29);
+  overview.merges.push('B5:C5');
+
+  const totalRows: [number, string, number, 'price' | 'final' | 'plain' | 'subtotal' | 'opex' | 'risk' | 'total' | 'net' | 'percent'][] = [
+    [6, 'Price', totals.price, 'price'],
+    [7, 'CC Surcharge + Commission', totals.finalPrice, 'final'],
+    [9, 'Cost of Hardware', totals.hardwareCost, 'plain'],
+    [10, 'Total Hardware Cost', totals.totalHardwareCost, 'subtotal'],
+    [12, 'Cost of Glass', totals.glassCost, 'plain'],
+    [13, 'Total Glass Cost', totals.totalGlassCost, 'subtotal'],
+    [15, 'OPEX', totals.opex, 'opex'],
+    [16, 'Risk', totals.risk, 'risk'],
+    [17, 'Total Cost', totals.totalCost, 'total'],
+    [19, '(gross) Net $', totals.grossNet, 'net'],
+    [21, '(gross) Net Profit %', totals.price > 0 ? totals.grossNet / totals.price : 0, 'percent'],
+  ];
+  for (const [row, name, value, kind] of totalRows) {
+    storefrontSummaryRow(overview, row, name, kind === 'percent' ? 'IFERROR(B19/B6,0)' : sumRefs(row), value, kind);
+  }
+  excelText(overview, 'C7', 'CC surcharge only — no separate commission is modeled.', 30);
+  excelText(overview, 'A23', 'STOREFRONT UNIT REGISTER', 21);
+  overview.merges.push('A23:C23');
+  excelText(overview, 'A24', 'Opening Mark / Type', 31);
+  excelText(overview, 'B24', 'Final Price with CC', 31);
+  excelText(overview, 'C24', 'Worksheet', 31);
+  totals.lines.forEach((line, i) => {
+    const r = 25 + i;
+    excelText(overview, `A${r}`, `${line.opening.mark} — ${formatOpeningType(line.opening.openingType)}`, 23);
+    excelFormula(overview, `B${r}`, `'${unitNames[i]}'!B7`, line.finalPrice ?? 0, 4);
+    excelText(overview, `C${r}`, unitNames[i], 27);
+  });
+  const noteRow = 27 + totals.lines.length;
+  excelText(overview, `A${noteRow}`, 'Editable formulas and assumptions are in each Unit worksheet.', 30);
+  overview.merges.push(`A${noteRow}:C${noteRow}`);
+  excelText(overview, `A${noteRow + 1}`, 'Cost formulas follow the live app; no material waste allowance.', 30);
+  overview.merges.push(`A${noteRow + 1}:C${noteRow + 1}`);
+
+  totals.lines.forEach((l, index) => {
+    const o = l.opening;
+    const p = project.pricing;
+    const sheet = newExcelSheet(unitNames[index]);
+    sheets.push(sheet);
+    excelText(sheet, 'A1', 'ASPECT GLASSWORK  |  STOREFRONT UNIT', 1);
+    sheet.merges.push('A1:C1');
+    excelText(sheet, 'A2', `${project.projectName}  |  ${o.mark}`, 2);
+    sheet.merges.push('A2:C2');
+    excelText(sheet, 'A3', 'Estimate Number', 28);
+    excelText(sheet, 'B3', project.estimateNumber, 29);
+    excelText(sheet, 'A4', 'Opening / Unit', 28);
+    excelText(sheet, 'B4', `${o.mark} — ${formatOpeningType(o.openingType)}`, 29);
+    sheet.merges.push('B4:C4');
+    excelText(sheet, 'A5', 'Frame System / Finish', 28);
+    excelText(sheet, 'B5', `${project.framingSystem || 'Unspecified'} / ${project.finish || 'Unspecified'}`, 29);
+    sheet.merges.push('B5:C5');
+
+    const r = (
+      row: number, label: string, formula: string, cached: number,
+      kind: 'price' | 'final' | 'plain' | 'subtotal' | 'opex' | 'risk' | 'total' | 'net' | 'percent'
+    ) => storefrontSummaryRow(sheet, row, label, formula, cached, kind);
+    r(6, 'Price', 'IF(B44>=1,0,B17/(1-B44))', l.price ?? 0, 'price');
+    r(7, 'CC Surcharge + Commission', 'B6*(1+B45)', l.finalPrice ?? 0, 'final');
+    excelText(sheet, 'C7', 'CC surcharge only; no separate commission is modeled.', 30);
+    r(9, 'Cost of Hardware', 'IF(B34="manual",B38*B28,B47*B35+(B36+B37)*B28)', l.hardwareCost, 'plain');
+    r(10, 'Total Hardware Cost', '(B9+B39)*(1+B40)', l.totalHardwareCost, 'subtotal');
+    r(12, 'Cost of Glass', 'IF(B31="manual",B33*B28,B46*B32)', l.glassCost, 'plain');
+    r(13, 'Total Glass Cost', 'B12*(1-B41)', l.totalGlassCost, 'subtotal');
+    r(15, 'OPEX', 'B42*B28', l.opex, 'opex');
+    r(16, 'Risk', 'B13*B43', l.risk, 'risk');
+    r(17, 'Total Cost', 'SUM(B10,B13,B15,B16)', l.totalCost, 'total');
+    r(19, '(gross) Net $', 'B6-B17', l.grossNet ?? 0, 'net');
+    r(21, '(gross) Net Profit %', 'IFERROR(B19/B6,0)', (l.grossNetProfitPct ?? 0) / 100, 'percent');
+    excelText(sheet, 'A23', `${o.mark}  |  ${formatOpeningType(o.openingType)}`, 21);
+    sheet.merges.push('A23:C23');
+    excelText(sheet, 'A24', 'Glass Specification', 28);
+    excelText(sheet, 'B24', `${o.glassSpecification}  (${o.glassStyle})`, 29);
+    sheet.merges.push('B24:C24');
+    excelText(sheet, 'A25', 'CALCULATION INPUTS', 31);
+    excelText(sheet, 'B25', 'VALUE', 31);
+    excelText(sheet, 'C25', 'METHOD / UNIT', 31);
+    const inNum = (row: number, label: string, value: number, note: string, style=24) => {
+      excelText(sheet, `A${row}`, label, 23);
+      excelNumber(sheet, `B${row}`, value, style);
+      excelText(sheet, `C${row}`, note, 30);
+    };
+    const inText = (row: number, label: string, value: string, note: string) => {
+      excelText(sheet, `A${row}`, label, 23);
+      excelText(sheet, `B${row}`, value, 27);
+      excelText(sheet, `C${row}`, note, 30);
+    };
+    inNum(26, 'Width (in)', l.width, 'Parsed from unit width');
+    inNum(27, 'Height (in)', l.height, 'Parsed from unit height');
+    inNum(28, 'Quantity', o.quantity, 'Number of assemblies', 32);
+    inNum(29, 'Glazing Columns', o.columns, 'Whole number', 32);
+    inNum(30, 'Glazing Rows', o.rows, 'Whole number', 32);
+    inText(31, 'Glass Costing Mode', o.glassMode, 'calculated or manual');
+    inNum(32, 'Glass Rate ($/SF)', l.glassRate, 'Only used if Glass Mode = calculated', 25);
+    inNum(33, 'Manual Glass Cost / Assembly', o.manualGlassCostEach, 'Only used if Glass Mode = manual', 25);
+    inText(34, 'Hardware Costing Mode', o.hardwareMode, 'calculated or manual');
+    inNum(35, 'Frame Rate ($/LF)', l.frameRate, 'Calculated hardware only', 25);
+    inNum(36, 'Door Package / Assembly', l.doorRate, 'Single / double door package as applicable', 25);
+    inNum(37, 'Hardware Allowance / Assembly', o.hardwareAllowance, 'Calculated hardware only', 25);
+    inNum(38, 'Manual Hardware Cost / Assembly', o.manualHardwareCostEach, 'Only if Hardware Mode = manual', 25);
+    inNum(39, 'Fixed Hardware Fee / Unit', p.hardwareFixedFee, 'Charged once per opening mark', 25);
+    inNum(40, 'Hardware Tax %', p.hardwareTaxPct / 100, 'Applied to hardware + fixed fee', 26);
+    inNum(41, 'Glass Discount %', p.glassDiscountPct / 100, 'Discount applied after initial glass cost', 26);
+    inNum(42, 'OPEX / Assembly', o.opexPerAssembly, 'Multiplied by quantity', 25);
+    inNum(43, 'Risk %', p.riskPct / 100, 'Percent of total glass cost', 26);
+    inNum(44, 'Gross Net Profit % (target)', o.targetGrossNetPct === null ? 0 : o.targetGrossNetPct / 100, 'Margin, not markup', 26);
+    inNum(45, 'CC Surcharge %', p.ccSurchargePct / 100, 'Applied to price before CC', 26);
+    excelText(sheet, 'A46', 'Glass Area (SF)', 23);
+    excelFormula(sheet, 'B46', 'B26*B27/144*B28', l.glassSF, 33);
+    excelText(sheet, 'C46', '(Width × Height ÷ 144) × Qty', 30);
+    excelText(sheet, 'A47', 'Frame Length (LF)', 23);
+    excelFormula(sheet, 'B47', '(2*(B26+B27)+(B29-1)*B27+(B30-1)*B26)/12*B28', l.frameLF, 33);
+    excelText(sheet, 'C47', '[Perimeter + intermediate framing] ÷ 12 × Qty', 30);
+    excelText(sheet, 'A49', 'All blue-highlighted input cells can be changed in Excel.', 30);
+    sheet.merges.push('A49:C49');
+    excelText(sheet, 'A50', 'The original app remains the source of truth until revised Excel values are re-entered.', 30);
+    sheet.merges.push('A50:C50');
+  });
+
+  const contents = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+    + '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">'
+    + '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>'
+    + '<Default Extension="xml" ContentType="application/xml"/>'
+    + '<Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>'
+    + '<Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/>'
+    + sheets.map((_, i) => `<Override PartName="/xl/worksheets/sheet${i + 1}.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>`).join('')
+    + '</Types>';
+  const rootRels = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+    + '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+    + '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/>'
+    + '</Relationships>';
+  const workbook = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+    + '<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">'
+    + `<sheets>${sheets.map((s, i) => `<sheet name="${excelXml(s.name)}" sheetId="${i + 1}" r:id="rId${i + 1}"/>`).join('')}</sheets>`
+    + '<calcPr calcId="191029" fullCalcOnLoad="1"/>'
+    + '</workbook>';
+  const workbookRels = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+    + '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+    + sheets.map((_, i) => `<Relationship Id="rId${i + 1}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet${i + 1}.xml"/>`).join('')
+    + `<Relationship Id="rId${sheets.length + 1}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/>`
+    + '</Relationships>';
+  return storefrontZip([
+    { name: '[Content_Types].xml', contents },
+    { name: '_rels/.rels', contents: rootRels },
+    { name: 'xl/workbook.xml', contents: workbook },
+    { name: 'xl/_rels/workbook.xml.rels', contents: workbookRels },
+    { name: 'xl/styles.xml', contents: storefrontStylesXml() },
+    ...sheets.map((sheet, i) => ({
+      name: `xl/worksheets/sheet${i + 1}.xml`,
+      contents: storefrontSheetXml(sheet),
+    })),
+  ]);
+}
+
+function downloadStorefrontXlsx(name: string, bytes: Uint8Array): void {
+  const binary = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
+  const url = URL.createObjectURL(new Blob([binary], {
+    type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  }));
+  const anchor = document.createElement('a');
+  anchor.href = url;
+  anchor.download = name;
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
 // =====================================================
@@ -2984,6 +3456,22 @@ export default function Home() {
     );
   }
 
+  // Storefront-only styled and formula-driven Excel workbook.
+  // This is additive; existing Takeoff CSV remains unchanged.
+  function exportStorefrontExcel(): void {
+    if (workspace !== 'storefront' || !totals.complete) return;
+    try {
+      const bytes = storefrontXlsx(project, totals);
+      downloadStorefrontXlsx(
+        `storefront-${safeName(project.estimateNumber)}-estimate.xlsx`,
+        bytes
+      );
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Excel export failed.';
+      setNotice(message);
+    }
+  }
+
   // ==================================================
   // TOOLBAR
   // ==================================================
@@ -3061,7 +3549,7 @@ export default function Home() {
         <div className="topbar-right">
           <span className="top-pill">
             <span className="green-dot" />
-            Browser-based · V1.7.13
+            Browser-based · V1.7.14
           </span>
 
           <span className="autosave">
@@ -3166,7 +3654,7 @@ export default function Home() {
 
           <div className="sidebar-help">
             <strong>
-              Estimator V1.7.13
+              Estimator V1.7.14
             </strong>
 
             <p>
@@ -4805,6 +5293,16 @@ export default function Home() {
                   >
                     Export Takeoff CSV ↗
                   </button>
+
+                  {workspace === 'storefront' && (
+                    <button
+                      className="summary-secondary"
+                      onClick={exportStorefrontExcel}
+                      disabled={!totals.complete}
+                    >
+                      Export Storefront Excel (.xlsx) ↗
+                    </button>
+                  )}
                 </section>
 
                 {/* PROJECT TOTALS */}
@@ -6075,7 +6573,7 @@ export default function Home() {
 
           <footer className="footer">
             <span>
-              Aspect Glasswork · V1.7.13
+              Aspect Glasswork · V1.7.14
             </span>
 
             <span>
