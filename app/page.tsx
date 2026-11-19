@@ -21,7 +21,7 @@ import type {
   StorefrontOpening,
 } from '../lib/types';
 
-// ASPECT GLASSWORK ESTIMATING STUDIO V1.7.16
+// ASPECT GLASSWORK ESTIMATING STUDIO V1.7.17
 // Blue and white theme, 13 Storefront glass specs, 8 Windows glass specs,
 // 20 Windows-only window types; unnumbered framing and door dropdowns.
 // Storefront framing AND door models now have an Other choice with a custom
@@ -30,8 +30,11 @@ import type {
 // New estimates in all workspaces prompt for Frame Finish; saved finishes are kept.
 // All workspaces support custom frame finishes; calculations are unchanged.
 // Existing estimating formulas, saved projects and model dropdowns are retained.
-// Storefront Excel now shows editable base amounts and nearby settings, with short formulas.
-// CSV and draft-export behavior remain unchanged.
+// V1.7.17: Storefront-only county hardware markup and manufacturer-adjusted glass tax.
+// County: Rockland 15%; Orange 20-25%; Sullivan 25-30%; Other custom rate.
+// Storefront glass: cost × (1 − manufacturer adjustment) × (1 + glass sales tax).
+// Live breakdown, CSV and simple Excel formulas use the same Storefront computation.
+// Other workspaces retain their existing calculation formulas and settings.
 
 // =====================================================
 // WORKSPACES
@@ -50,6 +53,8 @@ type Mode = 'calculated' | 'manual';
 type GlassStyle = 'Annealed' | 'Tempered';
 type PricingView = 'glass' | 'framing' | 'settings';
 type RateFilter = 'all' | 'priced' | 'unpriced';
+type StorefrontCounty = '' | 'Rockland' | 'Orange' | 'Sullivan' | 'Other';
+
 type LegacyGlassType = (typeof GLASS_TYPES)[number];
 
 const WORKSPACE_NAMES: Record<Workspace, string> = {
@@ -571,7 +576,30 @@ type Rules = PricingRules & {
   glassDiscountPct: number;
   riskPct: number;
   ccSurchargePct: number;
+  // Storefront-only rates; stored in this workspace's independent pricing object.
+  storefrontCounty: StorefrontCounty;
+  storefrontCountyRatePct: number | null;
+  storefrontGlassSalesTaxPct: number;
 };
+
+function storefrontCountyRate(p: Rules): number | null {
+  if (p.storefrontCounty === 'Rockland') return 15;
+  if (p.storefrontCounty === '') return null;
+  const rate = p.storefrontCountyRatePct;
+  if (rate === null || !Number.isFinite(rate)) return null;
+  if (p.storefrontCounty === 'Orange' && (rate < 20 || rate > 25)) return null;
+  if (p.storefrontCounty === 'Sullivan' && (rate < 25 || rate > 30)) return null;
+  if (p.storefrontCounty === 'Other' && (rate < 0 || rate > 100)) return null;
+  return rate;
+}
+
+function storefrontCountyRateHint(county: StorefrontCounty): string {
+  if (county === 'Orange') return 'Enter a county markup from 20% to 25%.';
+  if (county === 'Sullivan') return 'Enter a county markup from 25% to 30%.';
+  if (county === 'Other') return 'Ask Mendy for the applicable rate, then enter it here.';
+  if (county === 'Rockland') return 'Rockland County is fixed at 15%.';
+  return 'Select the county to set the hardware markup.';
+}
 
 type Project = Omit<
   EstimateProject,
@@ -884,6 +912,28 @@ function normalizeAppProject(
         rp.ccSurchargePct,
         8.5
       ),
+
+      storefrontCounty:
+        ['Rockland', 'Orange', 'Sullivan', 'Other', ''].includes(
+          String(rp.storefrontCounty ?? 'Other')
+        )
+          ? (rp.storefrontCounty ?? 'Other') as StorefrontCounty
+          : 'Other',
+
+      // Legacy saved drafts had no county field. Keep their prior numeric
+      // hardware tax as an editable Other rate rather than silently assigning 15%.
+      storefrontCountyRatePct:
+        typeof rp.storefrontCountyRatePct === 'number' &&
+        Number.isFinite(rp.storefrontCountyRatePct)
+          ? rp.storefrontCountyRatePct
+          : rp.storefrontCounty === ''
+            ? null
+            : nonneg(rp.hardwareTaxPct, 8.13),
+
+      storefrontGlassSalesTaxPct: nonneg(
+        rp.storefrontGlassSalesTaxPct,
+        8.875
+      ),
     },
   };
 }
@@ -976,6 +1026,15 @@ function freshFor(
 
   project.storefrontDoorModel = '';
 
+  if (workspace === 'storefront') {
+    project.pricing.storefrontCounty = '';
+    project.pricing.storefrontCountyRatePct = null;
+    project.pricing.glassDiscountPct = 15.725; // manufacturer adjustment, deducted
+    project.pricing.storefrontGlassSalesTaxPct = 8.875;
+    project.pricing.riskPct = 10;
+    project.pricing.ccSurchargePct = 8.5;
+  }
+
   return project;
 }
 
@@ -996,7 +1055,8 @@ function newDrafts(): Record<
 // =====================================================
 
 function calculate(
-  project: Project
+  project: Project,
+  workspace: Workspace = 'office-fit-out'
 ): Totals {
   const p = project.pricing;
 
@@ -1053,6 +1113,20 @@ function calculate(
       errors.push(
         `${name} must be between 0% and 100%.`
       );
+    }
+  }
+
+  // These requirements are exclusive to the Storefront workspace.
+  const countyRate = workspace === 'storefront' ? storefrontCountyRate(p) : null;
+  if (workspace === 'storefront') {
+    if (p.storefrontCounty === '') {
+      errors.push('Storefront: select the project county for hardware markup.');
+    } else if (countyRate === null) {
+      errors.push(`${p.storefrontCounty}: enter a valid county markup rate (${storefrontCountyRateHint(p.storefrontCounty)}).`);
+    }
+    if (!Number.isFinite(p.storefrontGlassSalesTaxPct) ||
+        p.storefrontGlassSalesTaxPct < 0 || p.storefrontGlassSalesTaxPct > 100) {
+      errors.push('Storefront glass sales tax must be between 0% and 100%.');
     }
   }
 
@@ -1233,22 +1307,31 @@ function calculate(
             o.hardwareAllowance
           ) * qty;
 
-    const totalHardwareCost =
-      (
-        hardwareCost +
-        p.hardwareFixedFee
-      ) *
-      (
-        1 +
-        p.hardwareTaxPct / 100
-      );
+    // Storefront-only computation supplied by Aspect Glasswork:
+    // hardware × (1 + county markup)
+    // glass × (1 - manufacturer adjustment) × (1 + glass sales tax)
+    // Other workspaces retain the previous fixed-fee, tax and discount rules.
+    if (workspace === 'storefront' && (
+      countyRate === null ||
+      !Number.isFinite(p.storefrontGlassSalesTaxPct) ||
+      p.storefrontGlassSalesTaxPct < 0 || p.storefrontGlassSalesTaxPct > 100 ||
+      !Number.isFinite(p.glassDiscountPct) ||
+      p.glassDiscountPct < 0 || p.glassDiscountPct > 100 ||
+      !Number.isFinite(p.riskPct) || p.riskPct < 0 || p.riskPct > 100 ||
+      !Number.isFinite(p.ccSurchargePct) ||
+      p.ccSurchargePct < 0 || p.ccSurchargePct > 100
+    )) {
+      continue; // Do not generate calculated prices from invalid Storefront rates.
+    }
 
-    const totalGlassCost =
-      glassCost *
-      (
-        1 -
-        p.glassDiscountPct / 100
-      );
+    const totalHardwareCost = workspace === 'storefront'
+      ? hardwareCost * (1 + (countyRate ?? 0) / 100)
+      : (hardwareCost + p.hardwareFixedFee) * (1 + p.hardwareTaxPct / 100);
+
+    const totalGlassCost = workspace === 'storefront'
+      ? glassCost * (1 - p.glassDiscountPct / 100) *
+        (1 + p.storefrontGlassSalesTaxPct / 100)
+      : glassCost * (1 - p.glassDiscountPct / 100);
 
     const opex =
       o.opexPerAssembly * qty;
@@ -1458,7 +1541,7 @@ function csvCell(
 // =====================================================
 // STOREFRONT EXCEL EXPORT (dependency-free XLSX)
 // Uses native OOXML + ZIP to avoid requiring a new npm package.
-// Storefront only; all amounts & formulas follow calculate().
+// Storefront only; all amounts & formulas follow calculate(project, 'storefront').
 // =====================================================
 
 type ExcelCell = {
@@ -1822,7 +1905,7 @@ function storefrontXlsx(project: Project, totals: Totals): Uint8Array {
     excelText(sheet, 'B5', `${project.framingSystem || 'Unspecified'} / ${project.finish || 'Unspecified'}`, 29);
     sheet.merges.push('B5:C5');
 
-    // Simple, spreadsheet-friendly format approved for V1.7.16.
+    // Simple, spreadsheet-friendly format approved for V1.7.17.
     // Base amounts are VALUES (not complicated formulas). All derived rows
     // use short formulas pointing to nearby, plainly labeled settings.
     // This preserves the application's live pricing exactly at export time.
@@ -1845,45 +1928,46 @@ function storefrontXlsx(project: Project, totals: Totals): Uint8Array {
     };
 
     r(6, 'Price', 'B17/(1-B20)', l.price ?? 0, 'price');
-    r(7, 'CC Surcharge + Commission', 'B6*(1+B27)', l.finalPrice ?? 0, 'final');
+    r(7, 'CC Surcharge + Commission', 'B6*(1+B28)', l.finalPrice ?? 0, 'final');
     excelText(sheet, 'C7', 'CC surcharge only; no separate commission is modeled.', 30);
 
     baseAmount(9, `Cost of Hardware${o.hardwareMode === 'manual' ? ' [manual]' : ' [calculated]'}`,
       l.hardwareCost, 'plain',
-      o.hardwareMode === 'calculated' ? 'B35*B42+(B45+B46)*B31' : undefined);
-    r(10, 'Total Hardware Cost', '(B9+B23)*(1+B24)', l.totalHardwareCost, 'subtotal');
+      o.hardwareMode === 'calculated' ? 'B36*B43+(B46+B47)*B32' : undefined);
+    r(10, 'Total Hardware Cost', 'B9*(1+B24)', l.totalHardwareCost, 'subtotal');
 
     baseAmount(12, `Cost of Glass${o.glassMode === 'manual' ? ' [manual]' : ' [calculated]'}`,
-      l.glassCost, 'plain', o.glassMode === 'calculated' ? 'B34*B41' : undefined);
-    r(13, 'Total Glass Cost', 'B12*(1-B25)', l.totalGlassCost, 'subtotal');
+      l.glassCost, 'plain', o.glassMode === 'calculated' ? 'B35*B42' : undefined);
+    r(13, 'Total Glass Cost', 'B12*(1-B25)*(1+B26)', l.totalGlassCost, 'subtotal');
 
     baseAmount(15, 'OPEX [manual]', l.opex, 'opex');
-    r(16, 'Risk', 'B13*B26', l.risk, 'risk');
+    r(16, 'Risk', 'B13*B27', l.risk, 'risk');
     r(17, 'Total Cost', 'SUM(B10,B13,B15,B16)', l.totalCost, 'total');
     r(19, '(gross) Net $', 'B6-B17', l.grossNet ?? 0, 'net');
     excelText(sheet, 'A20', '(gross) Net Profit % [manual]', 19);
     excelNumber(sheet, 'B20', (o.targetGrossNetPct ?? 0) / 100, 20);
 
-    // Visible settings, immediately beneath the cost summary. The five
-    // rates are the real project settings, not invented effective markups.
-    excelText(sheet, 'A22', 'VISIBLE ADJUSTMENT RATES  |  EDITABLE', 21);
+    // Visible, short-form Storefront workbook rates, directly below the summary.
+    excelText(sheet, 'A22', 'STOREFRONT ADJUSTMENT RATES  |  EDITABLE', 21);
     sheet.merges.push('A22:C22');
     const setting = (row: number, label: string, value: number, style: number, detail: string) => {
       excelText(sheet, `A${row}`, label, 23);
       excelNumber(sheet, `B${row}`, value, style);
       excelText(sheet, `C${row}`, detail, 30);
     };
-    setting(23, 'Fixed Hardware Fee / Unit', p.hardwareFixedFee, 25, 'Added once per opening mark');
-    setting(24, 'Hardware Tax %', p.hardwareTaxPct / 100, 26, 'Applied to hardware plus fixed fee');
-    setting(25, 'Glass Discount %', p.glassDiscountPct / 100, 26, 'Deducted from initial glass cost');
-    setting(26, 'Risk %', p.riskPct / 100, 26, 'Applied to total glass cost');
-    setting(27, 'CC Surcharge %', p.ccSurchargePct / 100, 26, 'Applied to price before CC');
+    excelText(sheet, 'A23', 'County', 23);
+    excelText(sheet, 'B23', p.storefrontCounty || 'Not selected', 27);
+    setting(24, 'County Hardware Markup %', (storefrontCountyRate(p) ?? 0) / 100, 26, 'Rockland 15%; Orange 20-25%; Sullivan 25-30%; Other custom');
+    setting(25, 'Glass Manufacturer Deduction %', p.glassDiscountPct / 100, 26, 'Deducted from base glass cost (15.725% default)');
+    setting(26, 'Glass Sales Tax %', p.storefrontGlassSalesTaxPct / 100, 26, 'Applied after manufacturer adjustment (8.875% default)');
+    setting(27, 'Risk %', p.riskPct / 100, 26, 'Applied to total glass cost');
+    setting(28, 'CC Surcharge %', p.ccSurchargePct / 100, 26, 'Applied to price before CC');
 
-    excelText(sheet, 'A29', 'UNIT DETAILS  |  ORIGINAL INPUTS', 21);
-    sheet.merges.push('A29:C29');
-    excelText(sheet, 'A30', 'Glass Specification', 28);
-    excelText(sheet, 'B30', `${o.glassSpecification} (${o.glassStyle})`, 29);
-    sheet.merges.push('B30:C30');
+    excelText(sheet, 'A30', 'UNIT DETAILS  |  ORIGINAL INPUTS', 21);
+    sheet.merges.push('A30:C30');
+    excelText(sheet, 'A31', 'Glass Specification', 28);
+    excelText(sheet, 'B31', `${o.glassSpecification} (${o.glassStyle})`, 29);
+    sheet.merges.push('B31:C31');
     const infoNumber = (row: number, label: string, value: number, explanation: string, style = 24) => {
       excelText(sheet, `A${row}`, label, 23);
       excelNumber(sheet, `B${row}`, value, style);
@@ -1894,32 +1978,34 @@ function storefrontXlsx(project: Project, totals: Totals): Uint8Array {
       excelText(sheet, `B${row}`, value, 27);
       excelText(sheet, `C${row}`, explanation, 30);
     };
-    infoNumber(31, 'Quantity', o.quantity, 'Number of assemblies; main costs include the quantity', 32);
-    infoNumber(32, 'Width (in)', l.width, 'Dimensions at export');
-    infoNumber(33, 'Height (in)', l.height, 'Dimensions at export');
-    infoNumber(34, 'Glass Area (SF)', l.glassSF, 'App-calculated snapshot for all assemblies', 33);
-    infoNumber(35, 'Frame Length (LF)', l.frameLF, 'App-calculated snapshot for all assemblies', 33);
-    infoText(36, 'Glass Costing Mode', o.glassMode, 'Calculated SF rate or manual per-assembly cost');
-    infoText(37, 'Hardware Costing Mode', o.hardwareMode, 'Calculated LF rate or manual per-assembly cost');
-    infoNumber(38, 'Manual Glass Cost / Assembly', o.manualGlassCostEach, 'Exact value typed in the app (if manual mode)', 25);
-    infoNumber(39, 'Manual Hardware Cost / Assembly', o.manualHardwareCostEach, 'Exact value typed in the app (if manual mode)', 25);
-    infoNumber(40, 'OPEX / Assembly', o.opexPerAssembly, 'Exact value typed in the app', 25);
-    infoNumber(41, 'Glass Rate ($/SF)', l.glassRate, 'Applied in app when Glass Costing Mode = calculated', 25);
-    infoNumber(42, 'Frame Rate ($/LF)', l.frameRate, 'Applied in app when Hardware Costing Mode = calculated', 25);
-    infoNumber(43, 'Glazing Columns', o.columns, 'Snapshot of glazing layout', 32);
-    infoNumber(44, 'Glazing Rows', o.rows, 'Snapshot of glazing layout', 32);
-    infoNumber(45, 'Door Package / Assembly', l.doorRate, 'App pricing input; included in calculated hardware', 25);
-    infoNumber(46, 'Hardware Allowance / Assembly', o.hardwareAllowance, 'App pricing input; included in calculated hardware', 25);
+    infoNumber(32, 'Quantity', o.quantity, 'Number of assemblies; main costs include the quantity', 32);
+    infoNumber(33, 'Width (in)', l.width, 'Dimensions at export');
+    infoNumber(34, 'Height (in)', l.height, 'Dimensions at export');
+    infoNumber(35, 'Glass Area (SF)', l.glassSF, 'App-calculated snapshot for all assemblies', 33);
+    infoNumber(36, 'Frame Length (LF)', l.frameLF, 'App-calculated snapshot for all assemblies', 33);
+    infoText(37, 'Glass Costing Mode', o.glassMode, 'Calculated SF rate or manual per-assembly cost');
+    infoText(38, 'Hardware Costing Mode', o.hardwareMode, 'Calculated LF rate or manual per-assembly cost');
+    infoNumber(39, 'Manual Glass Cost / Assembly', o.manualGlassCostEach, 'Exact value typed in the app (if manual mode)', 25);
+    infoNumber(40, 'Manual Hardware Cost / Assembly', o.manualHardwareCostEach, 'Exact value typed in the app (if manual mode)', 25);
+    infoNumber(41, 'OPEX / Assembly', o.opexPerAssembly, 'Exact value typed in the app', 25);
+    infoNumber(42, 'Glass Rate ($/SF)', l.glassRate, 'Applied in app when Glass Costing Mode = calculated', 25);
+    infoNumber(43, 'Frame Rate ($/LF)', l.frameRate, 'Applied in app when Hardware Costing Mode = calculated', 25);
+    infoNumber(44, 'Glazing Columns', o.columns, 'Snapshot of glazing layout', 32);
+    infoNumber(45, 'Glazing Rows', o.rows, 'Snapshot of glazing layout', 32);
+    infoNumber(46, 'Door Package / Assembly', l.doorRate, 'App pricing input; included in calculated hardware', 25);
+    infoNumber(47, 'Hardware Allowance / Assembly', o.hardwareAllowance, 'App pricing input; included in calculated hardware', 25);
 
-    excelText(sheet, 'A48', 'Manual B9/B12 and OPEX B15 are direct amounts. Calculated modes use simple formulas.', 30);
-    sheet.merges.push('A48:C48');
-    excelText(sheet, 'A49', 'Width, height, glass SF and frame LF are snapshots; re-export if geometry or quantity changes.', 30);
-    sheet.merges.push('A49:C49');
-    excelText(sheet, 'A50', 'The app is the source of truth; no material waste allowance is included.', 30);
+    excelText(sheet, 'A50', 'Manual B9/B12 and OPEX B15 are direct amounts. Calculated modes use simple formulas.', 30);
     sheet.merges.push('A50:C50');
+    excelText(sheet, 'A51', 'Width, height, glass SF and frame LF are snapshots; re-export if geometry or quantity changes.', 30);
+    sheet.merges.push('A51:C51');
+    excelText(sheet, 'A52', 'Storefront: hardware × county markup; glass × (1 - manufacturer adjustment) × (1 + sales tax).', 30);
+    sheet.merges.push('A52:C52');
+    excelText(sheet, 'A53', 'The app is the source of truth; no material waste allowance is included.', 30);
+    sheet.merges.push('A53:C53');
     if (!totals.complete) {
-      excelText(sheet, 'A52', 'PRELIMINARY DRAFT — REVIEW PROJECT VALIDATION BEFORE QUOTING', 21);
-      sheet.merges.push('A52:C52');
+      excelText(sheet, 'A55', 'PRELIMINARY DRAFT — REVIEW PROJECT VALIDATION BEFORE QUOTING', 21);
+      sheet.merges.push('A55:C55');
     }
   });
 
@@ -2228,9 +2314,11 @@ function Detail({
 function Worksheet({
   l,
   p,
+  workspace,
 }: {
   l: Line;
   p: Rules;
+  workspace: Workspace;
 }) {
   const m = (
     v: number | null
@@ -2284,9 +2372,11 @@ function Worksheet({
       <Detail
         title="Total Hardware Cost"
         formula={
-          `(${currency(l.hardwareCost)} + ` +
-          `${currency(p.hardwareFixedFee)}) × ` +
-          `(1 + ${pct(p.hardwareTaxPct)}%)`
+          workspace === 'storefront'
+            ? `${currency(l.hardwareCost)} × (1 + ${pct(storefrontCountyRate(p) ?? 0)}% ${p.storefrontCounty} markup)`
+            : `(${currency(l.hardwareCost)} + ` +
+              `${currency(p.hardwareFixedFee)}) × ` +
+              `(1 + ${pct(p.hardwareTaxPct)}%)`
         }
         result={currency(l.totalHardwareCost)}
       />
@@ -2307,8 +2397,12 @@ function Worksheet({
       <Detail
         title="Total Glass Cost"
         formula={
-          `${currency(l.glassCost)} × ` +
-          `(1 − ${pct(p.glassDiscountPct)}%)`
+          workspace === 'storefront'
+            ? `${currency(l.glassCost)} × ` +
+              `(1 − ${pct(p.glassDiscountPct)}% manufacturer adjustment) × ` +
+              `(1 + ${pct(p.storefrontGlassSalesTaxPct)}% glass sales tax)`
+            : `${currency(l.glassCost)} × ` +
+              `(1 − ${pct(p.glassDiscountPct)}%)`
         }
         result={currency(l.totalGlassCost)}
       />
@@ -2366,9 +2460,11 @@ function Worksheet({
 function OpeningFormula({
   l,
   p,
+  workspace,
 }: {
   l: Line;
   p: Rules;
+  workspace: Workspace;
 }) {
   const o = l.opening;
 
@@ -2424,7 +2520,7 @@ function OpeningFormula({
         result={`${n4(l.frameLF)} LF`}
       />
 
-      <Worksheet l={l} p={p} />
+      <Worksheet l={l} p={p} workspace={workspace} />
 
       <p
         style={{
@@ -2433,8 +2529,9 @@ function OpeningFormula({
         }}
       >
         Preliminary takeoff quantities.
-        The fixed hardware fee is charged
-        once per opening mark.
+        {workspace === 'storefront'
+          ? ' Hardware is marked up by the selected county rate; glass is adjusted and taxed.'
+          : ' The fixed hardware fee is charged once per opening mark.'}
         No material waste allowance is added.
       </p>
     </details>
@@ -2524,8 +2621,8 @@ export default function Home() {
     activeIds[workspace] ?? null;
 
   const totals = useMemo(
-    () => calculate(project),
-    [project]
+    () => calculate(project, workspace),
+    [project, workspace]
   );
 
   // Exports require priced unit calculations, not an unrelated estimate number.
@@ -3123,7 +3220,12 @@ export default function Home() {
     // Other workspaces and existing saved estimates stay untouched.
     setProject(old => ({
       ...freshFor(workspace),
-      pricing: structuredClone(old.pricing),
+      pricing: {
+        ...structuredClone(old.pricing),
+        // County markup is project-specific: request a new county selection.
+        storefrontCounty: workspace === 'storefront' ? '' : old.pricing.storefrontCounty,
+        storefrontCountyRatePct: workspace === 'storefront' ? null : old.pricing.storefrontCountyRatePct,
+      },
     }));
 
     setActiveIds(old => {
@@ -3631,7 +3733,7 @@ export default function Home() {
         <div className="topbar-right">
           <span className="top-pill">
             <span className="green-dot" />
-            Browser-based · V1.7.16
+            Browser-based · V1.7.17
           </span>
 
           <span className="autosave">
@@ -3736,7 +3838,7 @@ export default function Home() {
 
           <div className="sidebar-help">
             <strong>
-              Estimator V1.7.16
+              Estimator V1.7.17
             </strong>
 
             <p>
@@ -4310,6 +4412,73 @@ export default function Home() {
                       ) : null}
                     </div>
                   </div>
+
+                  {workspace === 'storefront' && (
+                    <div className="formula-panel" style={{ marginTop: 18 }}>
+                      <strong>Storefront Pricing Adjustments</strong>
+                      <p>These rates affect Storefront units only. The county rate applies to hardware; the manufacturer adjustment and glass sales tax apply to glass.</p>
+                      <div className="form-grid" style={{ marginTop: 12 }}>
+                        <Field label="County / Hardware Markup">
+                          <select
+                            className="input"
+                            aria-label="Storefront project county"
+                            value={p.storefrontCounty}
+                            onChange={e => {
+                              const county = e.target.value as StorefrontCounty;
+                              setProject(old => ({
+                                ...old,
+                                pricing: {
+                                  ...old.pricing,
+                                  storefrontCounty: county,
+                                  storefrontCountyRatePct: county === 'Rockland' ? 15 : null,
+                                },
+                              }));
+                            }}
+                          >
+                            <option value="">— Select County —</option>
+                            <option value="Rockland">Rockland — 15%</option>
+                            <option value="Orange">Orange — 20% to 25%</option>
+                            <option value="Sullivan">Sullivan — 25% to 30%</option>
+                            <option value="Other">Other</option>
+                          </select>
+                        </Field>
+                        {p.storefrontCounty !== '' && (
+                          <Field label={p.storefrontCounty === 'Rockland' ? 'Rockland Markup (%)' : `${p.storefrontCounty} Markup (%)`}
+                            hint={storefrontCountyRateHint(p.storefrontCounty)}>
+                            {p.storefrontCounty === 'Rockland' ? (
+                              <input className="input" type="text" readOnly value="15%" />
+                            ) : (
+                              <input
+                                className="input number-input"
+                                type="number"
+                                min={p.storefrontCounty === 'Orange' ? 20 : p.storefrontCounty === 'Sullivan' ? 25 : 0}
+                                max={p.storefrontCounty === 'Orange' ? 25 : p.storefrontCounty === 'Sullivan' ? 30 : 100}
+                                step="0.01"
+                                placeholder={p.storefrontCounty === 'Other' ? 'Enter Mendy-approved rate' : 'Enter a rate in the stated range'}
+                                value={p.storefrontCountyRatePct ?? ''}
+                                onChange={e => setRule('storefrontCountyRatePct', e.target.value === '' ? null : Number(e.target.value))}
+                              />
+                            )}
+                          </Field>
+                        )}
+                        <Field label="Glass Manufacturer Adjustment / Deduction (%)"
+                          hint="Deducted from base glass cost: 15.725% means Cost × (1 − 0.15725).">
+                          <Num value={p.glassDiscountPct} max={100} step={0.001}
+                            onChange={v => setRule('glassDiscountPct', v)} />
+                        </Field>
+                        <Field label="Glass Sales Tax (%)"
+                          hint="Applied after manufacturer adjustment; default 8.875%.">
+                          <Num value={p.storefrontGlassSalesTaxPct} max={100} step={0.001}
+                            onChange={v => setRule('storefrontGlassSalesTaxPct', v)} />
+                        </Field>
+                      </div>
+                      <p style={{ fontSize: 12 }}>
+                        Total Hardware = Hardware Cost × (1 + County Rate).<br />
+                        Total Glass = Glass Cost × (1 − Manufacturer Adjustment) × (1 + Glass Sales Tax).<br />
+                        Risk = Total Glass Cost × {pct(p.riskPct)}%.
+                      </p>
+                    </div>
+                  )}
 
                   {workspace === 'storefront' && (
                     <p
@@ -5009,6 +5178,7 @@ export default function Home() {
                             <OpeningFormula
                               l={line}
                               p={p}
+                              workspace={workspace}
                             />
                           </div>
                         )}
@@ -5356,6 +5526,7 @@ export default function Home() {
                         <OpeningFormula
                           l={selected}
                           p={p}
+                          workspace={workspace}
                         />
                       </div>
                     </>
@@ -6159,6 +6330,22 @@ export default function Home() {
                       </div>
 
                       <div className="form-grid">
+                        {workspace === 'storefront' && (
+                          <>
+                            <Field label="County hardware markup %" hint={`Selected county: ${p.storefrontCounty || 'Not selected'}. Set the county and markup in Storefront Project Information.`}>
+                              <input className="input" readOnly value={storefrontCountyRate(p) === null ? 'Select county in project details' : `${storefrontCountyRate(p)}%`} />
+                            </Field>
+                            <Field label="Glass manufacturer adjustment / deduction (%)">
+                              <Num value={p.glassDiscountPct} max={100} step={0.001}
+                                onChange={v => setRule('glassDiscountPct', v)} />
+                            </Field>
+                            <Field label="Glass sales tax (%)">
+                              <Num value={p.storefrontGlassSalesTaxPct} max={100} step={0.001}
+                                onChange={v => setRule('storefrontGlassSalesTaxPct', v)} />
+                            </Field>
+                          </>
+                        )}
+                        {workspace !== 'storefront' && (<>
                         <Field
                           label="Fixed hardware fee $ / opening mark"
                           hint="Added once per mark; default $15."
@@ -6206,7 +6393,9 @@ export default function Home() {
                           />
                         </Field>
 
-                        <Field label="Risk % of discounted glass">
+                        </>)}
+
+                        <Field label={workspace === 'storefront' ? 'Risk % of total glass cost' : 'Risk % of discounted glass'}>
                           <Num
                             value={
                               p.riskPct
@@ -6485,7 +6674,7 @@ export default function Home() {
                 >
                   {matches.map(item => {
                     const s =
-                      calculate(item.project);
+                      calculate(item.project, item.workspace);
 
                     return (
                       <article
@@ -6661,7 +6850,7 @@ export default function Home() {
 
           <footer className="footer">
             <span>
-              Aspect Glasswork · V1.7.16
+              Aspect Glasswork · V1.7.17
             </span>
 
             <span>
