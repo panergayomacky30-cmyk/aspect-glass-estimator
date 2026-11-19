@@ -21,8 +21,14 @@ import type {
   StorefrontOpening,
 } from '../lib/types';
 
-// ASPECT GLASSWORK ESTIMATING STUDIO V1.7.5
-// Aspect blue and white visual theme, independent Pricing & Rates directories for all four workspaces.
+// ASPECT GLASSWORK ESTIMATING STUDIO V1.7.13
+// Blue and white theme, 13 Storefront glass specs, 8 Windows glass specs,
+// 20 Windows-only window types; unnumbered framing and door dropdowns.
+// Storefront framing AND door models now have an Other choice with a custom
+// text field shown only when Other is selected (including saved custom data).
+// Windows, Curtain Walls, and Office Fit-Out keep their previous dropdowns.
+// New estimates in all workspaces prompt for Frame Finish; saved finishes are kept.
+// All workspaces support custom frame finishes; calculations are unchanged.
 // Existing estimating formulas, saved projects and model dropdowns are retained.
 
 // =====================================================
@@ -169,6 +175,18 @@ const STOREFRONT_DOORS = [
   },
 ] as const;
 
+// Storefront custom values use the existing saved string fields.
+// Existing manufacturer model names are left unchanged; no option numbers.
+const OTHER_STOREFRONT_SELECTION = 'Other';
+
+function isOtherStorefrontSelection(
+  value: string,
+  items: readonly { readonly name: string }[]
+): boolean {
+  return value.trim() !== '' &&
+    !items.some(item => item.name === value);
+}
+
 // =====================================================
 // GLASS SPECIFICATIONS
 // =====================================================
@@ -240,6 +258,149 @@ const GLASS_OPTIONS = Array.from(
   new Set<string>(GLASS_SPECIFICATIONS)
 );
 
+// The 13 glass specifications from the requested storefront reference.
+// This list is used ONLY by the Storefront unit dropdown and Storefront rates.
+// The Windows list is defined separately below.
+const STOREFRONT_GLASS_OPTIONS = [
+  '1/4" Clear Tempered Glass',
+  '1/4" Clear Tempered Hard-Coat Low-E Glass',
+  '3/8" Monolithic Glass',
+  '1/2" Clear Tempered Glass',
+  '1/2" Clear Tempered Glass (w/ Polished Edges)',
+  '1/2" Low-Iron Glass',
+  '1/2" Acid-Wash Tempered Glass (Single Side)',
+  '5/8" Glass',
+  '7/8" Clear Annealed Insulated Glass (IG)',
+  '7/8" Obscure / Grey Tinted / Bronze Tinted / Tempered Glass',
+  '1" Insulated Glass (1/4" Clear Temp + 1/4" Clear Temp)',
+  '1" Insulated Glass Low-E (1/4" Solarban 60 Tempered + 1/4" Clear Tempered w/ Argon Filled)',
+  '1" to 1-3/8" Insulated Glass',
+] as const;
+
+// WINDOWS ONLY — exactly the 8 specifications and order from the reference.
+// Does not modify the Storefront, Curtain Walls, or Office Fit-Out catalogs.
+const WINDOWS_GLASS_OPTIONS = [
+  '1/4" Glass',
+  '5/8" Glass',
+  '7/8" Clear Annealed Insulated Glass (I.G.)',
+  '7/8" Obscure Insulated Glass',
+  '7/8" Tinted Insulated Glass (Grey or Bronze)',
+  '1" Insulated Glass (1/8" Annealed + 1/8" Annealed)',
+  '1" Insulated Glass (1/8" Tempered + 1/8" Tempered)',
+  '1" Insulated Glass (1/4" Clear Temp + 1/4" Clear Temp)',
+] as const;
+
+// WINDOWS ONLY — the 19 preset window types shown in the supplied list,
+// followed by a 20th free-text Custom option. This is separate from the
+// legacy openingType used by pricing calculations, so window selections
+// never become storefront door packages by accident.
+const WINDOWS_WINDOW_TYPES = [
+  'Fixed Window',
+  'Swing-Out Casement Window',
+  'Double Casement Window',
+  'Project-Out Awning Window',
+  'Combination Fixed & Project-Out Awning Window',
+  'Project-In Hopper Window',
+  'Double-Hung Tilt Window (including Oriel & Cottage styles)',
+  '2-Lite Horizontal Sliding Window',
+  '3-Lite Horizontal Sliding Window',
+  'Fixed Over Project-In Hopper (Custom)',
+  'Project-Out Awning Over Fixed (Custom)',
+  'Project-In Hopper Over Fixed (Custom)',
+  'Awning Over Fixed Over Hopper (Custom)',
+  'Casement – Fixed – Casement (Custom)',
+  'Fixed – Casement (Custom)',
+  '2-Wide × 2-High Quad Units (Custom)',
+  '3-Wide × 2-High Punched-Opening Grids (Custom)',
+  'Continuous Ribbon Wall Assemblies (Custom)',
+  'Double-Hung w/ Transom or Sidelite Mulled Units (Custom)',
+  'Custom',
+] as const;
+
+type WindowType = (typeof WINDOWS_WINDOW_TYPES)[number];
+const CUSTOM_WINDOW_TYPE: WindowType = 'Custom';
+
+// WINDOWS ONLY — manufacturer framing systems specified in the new reference.
+// The 10th dropdown choice, Other, permits an editable framing description.
+// This project's existing framingSystem string is used for storage and exports.
+const WINDOWS_FRAMING_SYSTEMS = [
+  'GAMCO W250C — 2-1/2"',
+  'GAMCO W250HC — 2-1/2"',
+  'GAMCO SK2000-Series — 2" to 11"',
+  'REBCO 2,000 Series — 2"',
+  'REBCO Series 25000 — 2-1/2"',
+  'REBCO Series 1100 — 3-1/4"',
+  'REBCO Series 1102 — 3-1/4"',
+  'REBCO 110254 Sliding Window Frame — 3/4"',
+  'REBCO Non-Thermal Window Series — 2" (minimum)',
+] as const;
+
+const OTHER_WINDOW_FRAMING = 'Other';
+
+// Generic selections for workspaces whose manufacturer models have not yet
+// been specified. Other allows the estimator to enter an exact manufacturer,
+// product family, and profile without assigning an unsupported product type.
+const CURTAIN_WALL_FRAMING_SYSTEMS = [
+  'Aluminum curtain wall framing',
+  'Stick-built aluminum curtain wall framing',
+  'Unitized aluminum curtain wall framing',
+] as const;
+
+const OFFICE_FIT_OUT_FRAMING_SYSTEMS = [
+  'Aluminum-framed interior glass partition',
+  'Frameless interior glass partition',
+  'Interior storefront-style framing',
+] as const;
+
+const OTHER_NON_STOREFRONT_FRAMING = 'Other';
+
+function framingOptionsFor(workspace: Workspace): readonly string[] {
+  if (workspace === 'windows') return WINDOWS_FRAMING_SYSTEMS;
+  if (workspace === 'curtain-walls') return CURTAIN_WALL_FRAMING_SYSTEMS;
+  if (workspace === 'office-fit-out') return OFFICE_FIT_OUT_FRAMING_SYSTEMS;
+  return [];
+}
+
+function isOtherWorkspaceFraming(workspace: Workspace, value: string): boolean {
+  return value.trim() !== '' && !framingOptionsFor(workspace).includes(value);
+}
+
+// The same finish choices appear in Storefront, Windows, Curtain Walls,
+// and Office Fit-Out. A non-standard string is an existing custom finish.
+const FRAME_FINISH_OPTIONS = [
+  'Clear Anodized',
+  'Dark Bronze Anodized',
+  'Black Anodized',
+  'Black Painted',
+  'White Painted',
+  'Mill Finish',
+  'Custom / Other',
+] as const;
+
+const CUSTOM_FRAME_FINISH = 'Custom / Other';
+
+function isStandardWindowFraming(value: string): boolean {
+  return WINDOWS_FRAMING_SYSTEMS.some(name => name === value);
+}
+
+// Only an explicit Other choice or an existing custom description enables
+// the free-text field. Standard manufacturers never show the custom input.
+function isOtherWindowFraming(value: string): boolean {
+  return value.trim() !== '' && !isStandardWindowFraming(value);
+}
+
+function isStandardFrameFinish(value: string): boolean {
+  return FRAME_FINISH_OPTIONS.some(name => name === value);
+}
+
+
+function glassOptionsFor(workspace: Workspace): readonly string[] {
+  if (workspace === 'storefront') return STOREFRONT_GLASS_OPTIONS;
+  if (workspace === 'windows') return WINDOWS_GLASS_OPTIONS;
+  return GLASS_OPTIONS;
+}
+
+
 // =====================================================
 // GLASS GROUPS
 // =====================================================
@@ -294,22 +455,57 @@ const GLASS_GROUPS = GLASS_GROUP_NAMES.map(name => ({
   ),
 }));
 
+const STOREFRONT_GLASS_GROUP_NAME = 'Storefront Glass Specifications';
+const WINDOWS_GLASS_GROUP_NAME = 'Windows Glass Specifications';
+
+function glassGroupsFor(workspace: Workspace) {
+  if (workspace === 'storefront') {
+    return [{
+      name: STOREFRONT_GLASS_GROUP_NAME,
+      specs: [...STOREFRONT_GLASS_OPTIONS],
+    }];
+  }
+  if (workspace === 'windows') {
+    return [{
+      name: WINDOWS_GLASS_GROUP_NAME,
+      specs: [...WINDOWS_GLASS_OPTIONS],
+    }];
+  }
+  return GLASS_GROUPS;
+}
+
 const glassKey = (
   spec: string,
   style: GlassStyle
 ) => `${spec}::${style}`;
 
-const permittedStyles = (
-  spec: string
-): GlassStyle[] =>
-  /Tempered/i.test(spec)
-    ? ['Tempered']
-    : ['Annealed', 'Tempered'];
+const permittedStyles = (spec: string): GlassStyle[] => {
+  // The new storefront options may explicitly require annealed or tempered.
+  // "Temp" in the insulated-glass makeups also means tempered.
+  if (/\bAnnealed\b/i.test(spec) &&
+      !/\bTempered\b|\bTemp\b/i.test(spec)) {
+    return ['Annealed'];
+  }
+  if (/\bTempered\b|\bTemp\b/i.test(spec)) {
+    return ['Tempered'];
+  }
+  return ['Annealed', 'Tempered'];
+};
 
 function priceCategory(
   spec: string,
   style: GlassStyle
 ): LegacyGlassType | null {
+  // These two newly labeled storefront products are exact equivalents of
+  // the original plain clear tempered entries. Other new product variants
+  // deliberately have NO assumed supplier price.
+  if (style === 'Tempered' && spec === '1/4" Clear Tempered Glass') {
+    return '1/4" Clear Tempered';
+  }
+  if (style === 'Tempered' && spec === '1/2" Clear Tempered Glass') {
+    return '1/2" Clear Tempered';
+  }
+
   if (
     spec === '1/2" Clear' &&
     style === 'Tempered'
@@ -347,6 +543,9 @@ function priceCategory(
 // =====================================================
 
 type Opening = StorefrontOpening & {
+  // Window-specific configuration; stored with each estimate.
+  windowType: WindowType;
+  customWindowType: string;
   glassSpecification: string;
   glassStyle: GlassStyle;
   glassMode: Mode;
@@ -356,6 +555,12 @@ type Opening = StorefrontOpening & {
   opexPerAssembly: number;
   targetGrossNetPct: number | null;
 };
+
+function displayWindowType(o: Opening): string {
+  if (o.windowType !== CUSTOM_WINDOW_TYPE) return o.windowType;
+  const description = o.customWindowType.trim();
+  return description ? `Custom — ${description}` : 'Custom';
+}
 
 type Rules = PricingRules & {
   glassSpecRates: Record<string, number | null>;
@@ -581,6 +786,16 @@ function normalizeAppProject(
       return {
         ...o,
 
+        windowType:
+          WINDOWS_WINDOW_TYPES.includes(r.windowType as WindowType)
+            ? r.windowType as WindowType
+            : WINDOWS_WINDOW_TYPES[0],
+
+        customWindowType:
+          typeof r.customWindowType === 'string'
+            ? r.customWindowType
+            : '',
+
         glassSpecification:
           typeof r.glassSpecification === 'string' &&
           r.glassSpecification.trim()
@@ -690,11 +905,25 @@ function freshOpening(
   return {
     ...base,
 
+    windowType: WINDOWS_WINDOW_TYPES[0],
+    customWindowType: '',
+
     mark:
       `${WORKSPACE_PREFIX[workspace]}-` +
       String(index).padStart(2, '0'),
 
-    glassSpecification: base.glassType,
+    // Keep the underlying legacy glassType aligned where an exact
+    // equivalent exists; computations use glassSpecification independently.
+    glassType:
+      workspace === 'storefront'
+        ? '1/4" Clear Tempered'
+        : base.glassType,
+    glassSpecification:
+      workspace === 'storefront'
+        ? STOREFRONT_GLASS_OPTIONS[0]
+        : workspace === 'windows'
+          ? WINDOWS_GLASS_OPTIONS[7]
+          : base.glassType,
     glassStyle: 'Tempered',
 
     glassMode: 'calculated',
@@ -716,7 +945,14 @@ function freshFor(
 ): Project {
   const project = fresh();
 
+  // All four workspaces begin with an explicit finish selection.
+  // Saved projects retain their recorded finish when loaded.
+  project.finish = '';
+
   if (workspace === 'office-fit-out') {
+    // New Fit-Out estimates start without an assumed framing selection.
+    // Previously saved custom descriptions are not altered.
+    project.framingSystem = '';
     return project;
   }
 
@@ -732,11 +968,9 @@ function freshFor(
   project.scopeNotes = '';
 
   project.framingSystem =
-    workspace === 'storefront'
+    workspace === 'storefront' || workspace === 'windows'
       ? ''
-      : workspace === 'windows'
-        ? 'Aluminum window framing'
-        : 'Aluminum curtain wall framing';
+      : 'Aluminum curtain wall framing';
 
   project.storefrontDoorModel = '';
 
@@ -856,6 +1090,15 @@ function calculate(
     }
 
     marks.add(label.toUpperCase());
+
+    if (
+      o.windowType === CUSTOM_WINDOW_TYPE &&
+      !o.customWindowType.trim()
+    ) {
+      errors.push(
+        `${label}: enter a description for the Custom Window Type.`
+      );
+    }
 
     const w = parseInches(o.width);
     const h = parseInches(o.height);
@@ -1704,6 +1947,8 @@ export default function Home() {
 
   const [expandedGroups, setExpandedGroups] =
     useState<string[]>([
+      STOREFRONT_GLASS_GROUP_NAME,
+      WINDOWS_GLASS_GROUP_NAME,
       'Clear, Bronze & Grey',
     ]);
 
@@ -1734,6 +1979,9 @@ export default function Home() {
     useRef<HTMLInputElement>(null);
 
   const project = drafts[workspace];
+
+  const activeGlassOptions = glassOptionsFor(workspace);
+  const activeGlassGroups = glassGroupsFor(workspace);
 
   const activeId =
     activeIds[workspace] ?? null;
@@ -1809,6 +2057,16 @@ export default function Home() {
             normalizeAppProject(raw[name]);
 
           if (normalized) {
+            // Previously stored blank/legacy Windows defaults should not
+            // pre-select Other or show a text box on a new draft.
+            // Actual typed custom manufacturer names are preserved.
+            if (
+              name === 'windows' &&
+              (normalized.framingSystem === OTHER_WINDOW_FRAMING ||
+                normalized.framingSystem === 'Aluminum window framing')
+            ) {
+              normalized.framingSystem = '';
+            }
             result[name] = normalized;
           }
         }
@@ -2010,6 +2268,13 @@ export default function Home() {
     setPricingView('glass');
     setGlassSearch('');
     setRateFilter('all');
+    setExpandedGroups(
+      next === 'storefront'
+        ? [STOREFRONT_GLASS_GROUP_NAME]
+        : next === 'windows'
+          ? [WINDOWS_GLASS_GROUP_NAME]
+          : [...GLASS_GROUP_NAMES]
+    );
     setNotice('');
   }
 
@@ -2650,7 +2915,7 @@ export default function Home() {
       'Opening Mark',
       'Glass Specification',
       'Glass Style',
-      'Opening Type',
+      workspace === 'windows' ? 'Window Type' : 'Opening Type',
       'Quantity',
       'Width in',
       'Height in',
@@ -2681,9 +2946,9 @@ export default function Home() {
       l.opening.glassSpecification,
       l.opening.glassStyle,
 
-      formatOpeningType(
-        l.opening.openingType
-      ),
+      workspace === 'windows'
+        ? displayWindowType(l.opening)
+        : formatOpeningType(l.opening.openingType),
 
       l.opening.quantity,
       l.width,
@@ -2796,7 +3061,7 @@ export default function Home() {
         <div className="topbar-right">
           <span className="top-pill">
             <span className="green-dot" />
-            Browser-based · V1.7.5
+            Browser-based · V1.7.13
           </span>
 
           <span className="autosave">
@@ -2901,7 +3166,7 @@ export default function Home() {
 
           <div className="sidebar-help">
             <strong>
-              Estimator V1.7.5
+              Estimator V1.7.13
             </strong>
 
             <p>
@@ -3137,56 +3402,79 @@ export default function Home() {
                             modelDescription(
                               STOREFRONT_FRAMES,
                               project.framingSystem
-                            ) ||
-                            (
-                              project.framingSystem
-                                ? 'Existing/custom framing value. Select a listed model when applicable.'
+                            ) || (
+                              isOtherStorefrontSelection(
+                                project.framingSystem,
+                                STOREFRONT_FRAMES
+                              )
+                                ? 'Enter the manufacturer and framing system below.'
                                 : 'Choose the framing system for this storefront project.'
                             )
                           }
                         >
                           <select
                             className="input"
-                            value={project.framingSystem}
-                            onChange={e =>
-                              setInfo(
-                                'framingSystem',
-                                e.target.value
+                            aria-label="Storefront framing type or system"
+                            value={
+                              STOREFRONT_FRAMES.some(
+                                item => item.name === project.framingSystem
                               )
+                                ? project.framingSystem
+                                : isOtherStorefrontSelection(
+                                    project.framingSystem,
+                                    STOREFRONT_FRAMES
+                                  )
+                                  ? OTHER_STOREFRONT_SELECTION
+                                  : ''
+                            }
+                            onChange={e =>
+                              setInfo('framingSystem', e.target.value)
                             }
                           >
                             <option value="">
                               — Select Storefront Framing —
                             </option>
-
-                            {project.framingSystem &&
-                              !STOREFRONT_FRAMES.some(
-                                x =>
-                                  x.name ===
-                                  project.framingSystem
-                              ) && (
-                                <option
-                                  value={project.framingSystem}
-                                >
-                                  {project.framingSystem}
-                                  {' '}(existing)
-                                </option>
-                              )}
-
                             {STOREFRONT_FRAMES.map(item => (
-                              <option
-                                key={item.name}
-                                value={item.name}
-                              >
+                              <option key={item.name} value={item.name}>
                                 {item.name}
                               </option>
                             ))}
+                            <option value={OTHER_STOREFRONT_SELECTION}>
+                              Other
+                            </option>
                           </select>
-                        </Field>
 
-                        {/* ================================= */}
-                        {/* STOREFRONT-ONLY DOOR DROPDOWN */}
-                        {/* ================================= */}
+                          {isOtherStorefrontSelection(
+                            project.framingSystem,
+                            STOREFRONT_FRAMES
+                          ) && (
+                            <div style={{ marginTop: 10 }}>
+                              <label
+                                className="field-label"
+                                htmlFor="other-storefront-framing-system"
+                              >
+                                Other Storefront Framing System
+                              </label>
+                              <input
+                                id="other-storefront-framing-system"
+                                type="text"
+                                className="input"
+                                placeholder="Type manufacturer and framing system"
+                                value={
+                                  project.framingSystem === OTHER_STOREFRONT_SELECTION
+                                    ? ''
+                                    : project.framingSystem
+                                }
+                                onChange={e =>
+                                  setInfo(
+                                    'framingSystem',
+                                    e.target.value || OTHER_STOREFRONT_SELECTION
+                                  )
+                                }
+                              />
+                            </div>
+                          )}
+                        </Field>
 
                         <Field
                           label="Door Model / Type"
@@ -3194,117 +3482,263 @@ export default function Home() {
                             modelDescription(
                               STOREFRONT_DOORS,
                               project.storefrontDoorModel
-                            ) ||
-                            (
-                              project.storefrontDoorModel
-                                ? 'Previously saved custom door model.'
+                            ) || (
+                              isOtherStorefrontSelection(
+                                project.storefrontDoorModel,
+                                STOREFRONT_DOORS
+                              )
+                                ? 'Enter the custom door model or type below.'
                                 : 'Choose a door model, or leave blank if no entrance door is specified.'
                             )
                           }
                         >
                           <select
                             className="input"
+                            aria-label="Storefront door model or type"
                             value={
-                              project.storefrontDoorModel
+                              STOREFRONT_DOORS.some(
+                                item => item.name === project.storefrontDoorModel
+                              )
+                                ? project.storefrontDoorModel
+                                : isOtherStorefrontSelection(
+                                    project.storefrontDoorModel,
+                                    STOREFRONT_DOORS
+                                  )
+                                  ? OTHER_STOREFRONT_SELECTION
+                                  : ''
                             }
                             onChange={e =>
-                              setInfo(
-                                'storefrontDoorModel',
-                                e.target.value
-                              )
+                              setInfo('storefrontDoorModel', e.target.value)
                             }
                           >
                             <option value="">
                               — No door / Not specified —
                             </option>
-
-                            {project.storefrontDoorModel &&
-                              !STOREFRONT_DOORS.some(
-                                x =>
-                                  x.name ===
-                                  project.storefrontDoorModel
-                              ) && (
-                                <option
-                                  value={
-                                    project.storefrontDoorModel
-                                  }
-                                >
-                                  {project.storefrontDoorModel}
-                                  {' '}(existing)
-                                </option>
-                              )}
-
                             {STOREFRONT_DOORS.map(item => (
-                              <option
-                                key={item.name}
-                                value={item.name}
-                              >
+                              <option key={item.name} value={item.name}>
                                 {item.name}
                               </option>
                             ))}
+                            <option value={OTHER_STOREFRONT_SELECTION}>
+                              Other
+                            </option>
                           </select>
+
+                          {isOtherStorefrontSelection(
+                            project.storefrontDoorModel,
+                            STOREFRONT_DOORS
+                          ) && (
+                            <div style={{ marginTop: 10 }}>
+                              <label
+                                className="field-label"
+                                htmlFor="other-storefront-door-model"
+                              >
+                                Other Storefront Door Model / Type
+                              </label>
+                              <input
+                                id="other-storefront-door-model"
+                                type="text"
+                                className="input"
+                                placeholder="Type manufacturer and door model or type"
+                                value={
+                                  project.storefrontDoorModel === OTHER_STOREFRONT_SELECTION
+                                    ? ''
+                                    : project.storefrontDoorModel
+                                }
+                                onChange={e =>
+                                  setInfo(
+                                    'storefrontDoorModel',
+                                    e.target.value || OTHER_STOREFRONT_SELECTION
+                                  )
+                                }
+                              />
+                            </div>
+                          )}
                         </Field>
                       </>
-                    ) : (
-                      <Field label="Framing System">
-                        <Txt
-                          value={project.framingSystem}
-                          onChange={v =>
-                            setInfo(
-                              'framingSystem',
-                              v
-                            )
+                    ) : workspace === 'windows' ? (
+                      /* WINDOWS ONLY — select a framing model or type Other. */
+                      <div className="field">
+                        <label className="field-label" htmlFor="windows-framing-system">
+                          Framing System
+                        </label>
+                        <select
+                          id="windows-framing-system"
+                          className="input"
+                          value={
+                            isStandardWindowFraming(project.framingSystem)
+                              ? project.framingSystem
+                              : isOtherWindowFraming(project.framingSystem)
+                                ? OTHER_WINDOW_FRAMING
+                                : ''
                           }
-                        />
-                      </Field>
+                          onChange={e =>
+                            setInfo('framingSystem', e.target.value)
+                          }
+                        >
+                          <option value="">
+                            — Select Window Framing —
+                          </option>
+                          {WINDOWS_FRAMING_SYSTEMS.map(name => (
+                            <option key={name} value={name}>
+                              {name}
+                            </option>
+                          ))}
+                          <option value={OTHER_WINDOW_FRAMING}>
+                            Other
+                          </option>
+                        </select>
+
+                        {/* Revealed only after Other is chosen, or for a saved custom value. */}
+                        {isOtherWindowFraming(project.framingSystem) && (
+                            <div style={{ marginTop: 10 }}>
+                              <label className="field-label" htmlFor="other-windows-framing-system">
+                                Other Window Framing System
+                              </label>
+                              <input
+                                id="other-windows-framing-system"
+                                type="text"
+                                className="input"
+                                aria-label="Other window framing system"
+                                placeholder="Type the manufacturer and framing system"
+                                value={
+                                  project.framingSystem === OTHER_WINDOW_FRAMING
+                                    ? ''
+                                    : project.framingSystem
+                                }
+                                onChange={e =>
+                                  setInfo(
+                                    'framingSystem',
+                                    e.target.value || OTHER_WINDOW_FRAMING
+                                  )
+                                }
+                              />
+                            </div>
+                          )}
+                      </div>
+                    ) : (
+                      /* Curtain Walls / Office Fit-Out: unnumbered choices, plus Other. */
+                      <div className="field">
+                        <label
+                          className="field-label"
+                          htmlFor={`${workspace}-framing-system`}
+                        >
+                          Framing System
+                        </label>
+                        <select
+                          id={`${workspace}-framing-system`}
+                          className="input"
+                          value={
+                            framingOptionsFor(workspace).includes(project.framingSystem)
+                              ? project.framingSystem
+                              : isOtherWorkspaceFraming(workspace, project.framingSystem)
+                                ? OTHER_NON_STOREFRONT_FRAMING
+                                : ''
+                          }
+                          onChange={e => setInfo('framingSystem', e.target.value)}
+                        >
+                          <option value="">
+                            — Select {WORKSPACE_NAMES[workspace]} Framing —
+                          </option>
+                          {framingOptionsFor(workspace).map(name => (
+                            <option key={name} value={name}>
+                              {name}
+                            </option>
+                          ))}
+                          <option value={OTHER_NON_STOREFRONT_FRAMING}>
+                            Other
+                          </option>
+                        </select>
+
+                        {isOtherWorkspaceFraming(workspace, project.framingSystem) && (
+                          <div style={{ marginTop: 10 }}>
+                            <label
+                              className="field-label"
+                              htmlFor={`other-${workspace}-framing-system`}
+                            >
+                              Other {WORKSPACE_NAMES[workspace]} Framing System
+                            </label>
+                            <input
+                              id={`other-${workspace}-framing-system`}
+                              type="text"
+                              className="input"
+                              aria-label={`Other ${WORKSPACE_NAMES[workspace]} framing system`}
+                              placeholder="Type the manufacturer and framing system"
+                              value={
+                                project.framingSystem === OTHER_NON_STOREFRONT_FRAMING
+                                  ? ''
+                                  : project.framingSystem
+                              }
+                              onChange={e =>
+                                setInfo(
+                                  'framingSystem',
+                                  e.target.value || OTHER_NON_STOREFRONT_FRAMING
+                                )
+                              }
+                            />
+                          </div>
+                        )}
+                      </div>
                     )}
 
-                    {/* FRAME FINISH */}
+                    {/* FRAME FINISH — all four workspaces */}
 
-                    <Field label="Frame Finish">
+                    <div className="field">
+                      <label className="field-label" htmlFor="project-frame-finish">
+                        Frame Finish
+                      </label>
                       <select
+                        id="project-frame-finish"
                         className="input"
-                        value={project.finish}
+                        value={
+                          isStandardFrameFinish(project.finish)
+                            ? project.finish
+                            : project.finish.trim() !== ''
+                              ? CUSTOM_FRAME_FINISH
+                              : ''
+                        }
                         onChange={e =>
-                          setInfo(
-                            'finish',
-                            e.target.value
-                          )
+                          setInfo('finish', e.target.value)
                         }
                       >
-                        {![
-                          'Clear Anodized',
-                          'Dark Bronze Anodized',
-                          'Black Anodized',
-                          'Black Painted',
-                          'White Painted',
-                          'Mill Finish',
-                          'Custom / Other',
-                        ].includes(project.finish) && (
-                          <option value={project.finish}>
-                            {project.finish}
-                            {' '}(existing)
-                          </option>
-                        )}
-
-                        {[
-                          'Clear Anodized',
-                          'Dark Bronze Anodized',
-                          'Black Anodized', 
-                          'Black Painted',
-                          'White Painted',
-                          'Mill Finish',
-                          'Custom / Other',
-                        ].map(x => (
-                          <option
-                            key={x}
-                            value={x}
-                          >
-                            {x}
+                        <option value="">
+                          — Select Frame Finish —
+                        </option>
+                        {FRAME_FINISH_OPTIONS.map(name => (
+                          <option key={name} value={name}>
+                            {name}
                           </option>
                         ))}
                       </select>
-                    </Field>
+
+                      {project.finish.trim() !== '' &&
+                      (!isStandardFrameFinish(project.finish) ||
+                        project.finish === CUSTOM_FRAME_FINISH) ? (
+                        <div style={{ marginTop: 10 }}>
+                          <label className="field-label" htmlFor="custom-project-frame-finish">
+                            Custom Frame Finish
+                          </label>
+                          <input
+                            id="custom-project-frame-finish"
+                            type="text"
+                            className="input"
+                            aria-label="Custom frame finish"
+                            placeholder="Type the custom color or finish"
+                            value={
+                              project.finish === CUSTOM_FRAME_FINISH
+                                ? ''
+                                : project.finish
+                            }
+                            onChange={e =>
+                              setInfo(
+                                'finish',
+                                e.target.value || CUSTOM_FRAME_FINISH
+                              )
+                            }
+                          />
+                        </div>
+                      ) : null}
+                    </div>
                   </div>
 
                   {workspace === 'storefront' && (
@@ -3394,9 +3828,9 @@ export default function Home() {
 
                             <span className="opening-category">
                               {o.mark} {' · '}
-                              {formatOpeningType(
-                                o.openingType
-                              )}
+                              {workspace === 'windows'
+                                ? displayWindowType(o)
+                                : formatOpeningType(o.openingType)}
                             </span>
                           </div>
 
@@ -3443,29 +3877,65 @@ export default function Home() {
                             />
                           </Field>
 
-                          <Field label="Opening type">
-                            <select
-                              className="input"
-                              value={o.openingType}
-                              onChange={e =>
-                                setOpening(o.id, {
-                                  openingType:
-                                    e.target.value as Opening['openingType'],
-                                })
-                              }
-                            >
-                              <option value="fixed">
-                                Fixed glazing
-                              </option>
-
-                              <option value="single-door">
-                                Single door
-                              </option>
-
-                              <option value="double-door">
-                                Double door
-                              </option>
-                            </select>
+                          <Field
+                            label={
+                              workspace === 'windows'
+                                ? 'Window Type'
+                                : 'Opening type'
+                            }
+                          >
+                            {workspace === 'windows' ? (
+                              <>
+                                <select
+                                  className="input"
+                                  value={o.windowType}
+                                  onChange={e =>
+                                    setOpening(o.id, {
+                                      windowType:
+                                        e.target.value as WindowType,
+                                      // Window operability is descriptive in
+                                      // this version. Do not charge door kits.
+                                      openingType: 'fixed',
+                                    })
+                                  }
+                                >
+                                  {WINDOWS_WINDOW_TYPES.map(type => (
+                                    <option key={type} value={type}>
+                                      {type}
+                                    </option>
+                                  ))}
+                                </select>
+                                {o.windowType === CUSTOM_WINDOW_TYPE && (
+                                  <input
+                                    className="input"
+                                    style={{ marginTop: 8 }}
+                                    aria-label="Custom Window Type description"
+                                    placeholder="Type your custom window type here"
+                                    value={o.customWindowType}
+                                    onChange={e =>
+                                      setOpening(o.id, {
+                                        customWindowType: e.target.value,
+                                      })
+                                    }
+                                  />
+                                )}
+                              </>
+                            ) : (
+                              <select
+                                className="input"
+                                value={o.openingType}
+                                onChange={e =>
+                                  setOpening(o.id, {
+                                    openingType:
+                                      e.target.value as Opening['openingType'],
+                                  })
+                                }
+                              >
+                                <option value="fixed">Fixed glazing</option>
+                                <option value="single-door">Single door</option>
+                                <option value="double-door">Double door</option>
+                              </select>
+                            )}
                           </Field>
 
                           <Field label="Width (inches)">
@@ -3539,28 +4009,23 @@ export default function Home() {
                                   const spec =
                                     e.target.value;
 
-                                  const legacy =
-                                    GLASS_TYPES.find(
-                                      g => g === spec
-                                    );
+                                  const styles = permittedStyles(spec);
+                                  const nextStyle = styles.includes(o.glassStyle)
+                                    ? o.glassStyle
+                                    : styles[0];
+                                  const legacy = priceCategory(spec, nextStyle);
 
                                   setOpening(o.id, {
                                     glassSpecification: spec,
-
-                                    glassStyle:
-                                      /Tempered/i.test(spec)
-                                        ? 'Tempered'
-                                        : o.glassStyle,
-
+                                    glassStyle: nextStyle,
                                     ...(legacy
                                       ? { glassType: legacy }
                                       : {}),
-
                                     glassRateOverride: null,
                                   });
                                 }}
                               >
-                                {!GLASS_OPTIONS.includes(
+                                {!activeGlassOptions.includes(
                                   o.glassSpecification
                                 ) && (
                                   <option
@@ -3573,7 +4038,7 @@ export default function Home() {
                                   </option>
                                 )}
 
-                                {GLASS_OPTIONS.map(
+                                {activeGlassOptions.map(
                                   spec => (
                                     <option
                                       key={spec}
@@ -4449,7 +4914,7 @@ export default function Home() {
                   {WORKSPACES.map(name => {
                     const isSelected = name === workspace;
                     const rates = drafts[name].pricing;
-                    const pricedCount = GLASS_OPTIONS.filter(spec =>
+                    const pricedCount = glassOptionsFor(name).filter(spec =>
                       permittedStyles(spec).some(style =>
                         catalogRate(spec, style, rates) !== null
                       )
@@ -4591,7 +5056,11 @@ export default function Home() {
                     </div>
 
                     <p className="panel-subtitle">
-                      All {GLASS_OPTIONS.length} glass
+                      All {activeGlassOptions.length} {workspace === 'storefront'
+                        ? 'Storefront-only glass'
+                        : workspace === 'windows'
+                          ? 'Windows-only glass'
+                          : 'glass'}
                       specifications, organized in
                       collapsible categories.
                       Enter separate Annealed or
@@ -4676,7 +5145,7 @@ export default function Home() {
                           setRateFilter('all');
 
                           setExpandedGroups(
-                            [...GLASS_GROUP_NAMES]
+                            activeGlassGroups.map(group => group.name)
                           );
                         }}
                       >
@@ -4698,7 +5167,7 @@ export default function Home() {
 
                     {/* GLASS GROUPS */}
 
-                    {GLASS_GROUPS.map(group => {
+                    {activeGlassGroups.map(group => {
                       const visible = group.specs.filter(
                         spec => {
                           if (
@@ -4907,8 +5376,7 @@ export default function Home() {
                                       );
 
                                     const incompatible =
-                                      style === 'Annealed' &&
-                                      /Tempered/i.test(spec);
+                                      !permittedStyles(spec).includes(style);
 
                                     return (
                                       <input
@@ -4936,7 +5404,7 @@ export default function Home() {
                                         }}
                                         title={
                                           incompatible
-                                            ? 'This specification is explicitly labeled Tempered.'
+                                            ? 'This glass specification requires the other glass style.'
                                             : 'Blank = not priced'
                                         }
                                         placeholder={
@@ -5607,7 +6075,7 @@ export default function Home() {
 
           <footer className="footer">
             <span>
-              Aspect Glasswork · V1.7.5
+              Aspect Glasswork · V1.7.13
             </span>
 
             <span>
