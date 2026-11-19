@@ -21,7 +21,7 @@ import type {
   StorefrontOpening,
 } from '../lib/types';
 
-// ASPECT GLASSWORK ESTIMATING STUDIO V1.7.14
+// ASPECT GLASSWORK ESTIMATING STUDIO V1.7.15
 // Blue and white theme, 13 Storefront glass specs, 8 Windows glass specs,
 // 20 Windows-only window types; unnumbered framing and door dropdowns.
 // Storefront framing AND door models now have an Other choice with a custom
@@ -30,7 +30,7 @@ import type {
 // New estimates in all workspaces prompt for Frame Finish; saved finishes are kept.
 // All workspaces support custom frame finishes; calculations are unchanged.
 // Existing estimating formulas, saved projects and model dropdowns are retained.
-// New: Storefront-only formula-driven, navy-and-blue Excel (.xlsx) export; CSV unchanged.
+// Storefront Excel and CSV now export once unit calculations are valid; incomplete project metadata is marked as a draft.
 
 // =====================================================
 // WORKSPACES
@@ -1392,6 +1392,23 @@ function calculate(
   };
 }
 
+// Download readiness is intentionally separate from project-form validation.
+// Blank estimate numbers/client metadata must not block an already-priced takeoff.
+// Still require every unit to calculate and have a finite selling price, so an
+// incomplete cost or missing gross-net target cannot be mistaken for a quote.
+function hasExportableCalculations(project: Project, totals: Totals): boolean {
+  return (
+    project.openings.length > 0 &&
+    totals.lines.length === project.openings.length &&
+    totals.lines.every(line =>
+      Number.isFinite(line.totalCost) &&
+      line.price !== null && Number.isFinite(line.price) &&
+      line.finalPrice !== null && Number.isFinite(line.finalPrice) &&
+      line.grossNet !== null && Number.isFinite(line.grossNet)
+    )
+  );
+}
+
 // =====================================================
 // DOWNLOAD AND EXPORT
 // =====================================================
@@ -1719,7 +1736,7 @@ function storefrontZip(files: { name: string; contents: string }[]): Uint8Array 
 }
 
 function storefrontXlsx(project: Project, totals: Totals): Uint8Array {
-  if (!totals.complete) throw new Error('Finish the estimate before exporting Excel.');
+  if (!hasExportableCalculations(project, totals)) throw new Error("Complete each unit's dimensions, costs and gross net profit % before exporting Excel.");
   const sheets: ExcelSheet[] = [];
   const overview = newExcelSheet('Storefront Summary');
   sheets.push(overview);
@@ -1729,10 +1746,10 @@ function storefrontXlsx(project: Project, totals: Totals): Uint8Array {
 
   excelText(overview, 'A1', 'ASPECT GLASSWORK  |  STOREFRONT ESTIMATE', 1);
   overview.merges.push('A1:C1');
-  excelText(overview, 'A2', project.projectName, 2);
+  excelText(overview, 'A2', project.projectName.trim() || 'Untitled Storefront Draft', 2);
   overview.merges.push('A2:C2');
   excelText(overview, 'A3', 'Estimate Number', 28);
-  excelText(overview, 'B3', project.estimateNumber, 29);
+  excelText(overview, 'B3', project.estimateNumber.trim() || 'Unnumbered Draft', 29);
   excelText(overview, 'A4', 'Client / Contractor', 28);
   excelText(overview, 'B4', project.clientName || 'Not specified', 29);
   overview.merges.push('B4:C4');
@@ -1774,6 +1791,18 @@ function storefrontXlsx(project: Project, totals: Totals): Uint8Array {
   excelText(overview, `A${noteRow + 1}`, 'Cost formulas follow the live app; no material waste allowance.', 30);
   overview.merges.push(`A${noteRow + 1}:C${noteRow + 1}`);
 
+  // Keep calculated drafts downloadable, but clearly distinguish them from
+  // a fully validated quotation and print any still-missing project details.
+  if (!totals.complete) {
+    const draftRow = noteRow + 3;
+    excelText(overview, `A${draftRow}`, 'PRELIMINARY DRAFT — VERIFY INPUTS BEFORE QUOTING', 21);
+    overview.merges.push(`A${draftRow}:C${draftRow}`);
+    totals.errors.forEach((error, i) => {
+      excelText(overview, `A${draftRow + i + 1}`, `Review: ${error}`, 30);
+      overview.merges.push(`A${draftRow + i + 1}:C${draftRow + i + 1}`);
+    });
+  }
+
   totals.lines.forEach((l, index) => {
     const o = l.opening;
     const p = project.pricing;
@@ -1781,10 +1810,10 @@ function storefrontXlsx(project: Project, totals: Totals): Uint8Array {
     sheets.push(sheet);
     excelText(sheet, 'A1', 'ASPECT GLASSWORK  |  STOREFRONT UNIT', 1);
     sheet.merges.push('A1:C1');
-    excelText(sheet, 'A2', `${project.projectName}  |  ${o.mark}`, 2);
+    excelText(sheet, 'A2', `${project.projectName.trim() || 'Untitled Storefront Draft'}  |  ${o.mark}`, 2);
     sheet.merges.push('A2:C2');
     excelText(sheet, 'A3', 'Estimate Number', 28);
-    excelText(sheet, 'B3', project.estimateNumber, 29);
+    excelText(sheet, 'B3', project.estimateNumber.trim() || 'Unnumbered Draft', 29);
     excelText(sheet, 'A4', 'Opening / Unit', 28);
     excelText(sheet, 'B4', `${o.mark} — ${formatOpeningType(o.openingType)}`, 29);
     sheet.merges.push('B4:C4');
@@ -1856,6 +1885,10 @@ function storefrontXlsx(project: Project, totals: Totals): Uint8Array {
     sheet.merges.push('A49:C49');
     excelText(sheet, 'A50', 'The original app remains the source of truth until revised Excel values are re-entered.', 30);
     sheet.merges.push('A50:C50');
+    if (!totals.complete) {
+      excelText(sheet, 'A52', 'PRELIMINARY DRAFT — REVIEW PROJECT VALIDATION BEFORE QUOTING', 21);
+      sheet.merges.push('A52:C52');
+    }
   });
 
   const contents = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
@@ -2462,6 +2495,9 @@ export default function Home() {
     () => calculate(project),
     [project]
   );
+
+  // Exports require priced unit calculations, not an unrelated estimate number.
+  const exportReady = hasExportableCalculations(project, totals);
 
   const p = project.pricing;
 
@@ -3380,6 +3416,10 @@ export default function Home() {
   // ==================================================
 
   function exportCSV() {
+    if (!exportReady) {
+      setNotice('Complete the dimensions, costing and target gross net profit % for every unit before exporting.');
+      return;
+    }
     const header = [
       'Workspace',
       'Project Framing System',
@@ -3440,7 +3480,7 @@ export default function Home() {
     ]);
 
     download(
-      `${workspace}-${safeName(
+      `${totals.complete ? '' : 'draft-'}${workspace}-${safeName(
         project.estimateNumber
       )}-takeoff.csv`,
 
@@ -3454,18 +3494,28 @@ export default function Home() {
 
       'text/csv;charset=utf-8'
     );
+    if (!totals.complete) {
+      setNotice('Preliminary draft exported. Check Review Estimate Inputs before issuing a quotation.');
+    }
   }
 
   // Storefront-only styled and formula-driven Excel workbook.
   // This is additive; existing Takeoff CSV remains unchanged.
   function exportStorefrontExcel(): void {
-    if (workspace !== 'storefront' || !totals.complete) return;
+    if (workspace !== 'storefront') return;
+    if (!exportReady) {
+      setNotice('Complete the dimensions, costing and target gross net profit % for every unit before exporting Excel.');
+      return;
+    }
     try {
       const bytes = storefrontXlsx(project, totals);
       downloadStorefrontXlsx(
-        `storefront-${safeName(project.estimateNumber)}-estimate.xlsx`,
+        `${totals.complete ? '' : 'draft-'}storefront-${safeName(project.estimateNumber)}-estimate.xlsx`,
         bytes
       );
+      if (!totals.complete) {
+        setNotice('Preliminary Excel draft exported. Review the validation warnings in the Storefront Summary sheet before quoting.');
+      }
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Excel export failed.';
       setNotice(message);
@@ -3549,7 +3599,7 @@ export default function Home() {
         <div className="topbar-right">
           <span className="top-pill">
             <span className="green-dot" />
-            Browser-based · V1.7.14
+            Browser-based · V1.7.15
           </span>
 
           <span className="autosave">
@@ -3654,7 +3704,7 @@ export default function Home() {
 
           <div className="sidebar-help">
             <strong>
-              Estimator V1.7.14
+              Estimator V1.7.15
             </strong>
 
             <p>
@@ -5289,7 +5339,7 @@ export default function Home() {
                   <button
                     className="summary-secondary"
                     onClick={exportCSV}
-                    disabled={!totals.complete}
+                    disabled={!exportReady}
                   >
                     Export Takeoff CSV ↗
                   </button>
@@ -5298,10 +5348,16 @@ export default function Home() {
                     <button
                       className="summary-secondary"
                       onClick={exportStorefrontExcel}
-                      disabled={!totals.complete}
+                      disabled={!exportReady}
                     >
                       Export Storefront Excel (.xlsx) ↗
                     </button>
+                  )}
+
+                  {exportReady && !totals.complete && (
+                    <p style={{ color: '#D3E9FB', fontSize: 12, lineHeight: 1.5, margin: '8px 16px 0' }}>
+                      Export available as a preliminary draft. Resolve the warnings under Review Estimate Inputs before quoting.
+                    </p>
                   )}
                 </section>
 
@@ -6573,7 +6629,7 @@ export default function Home() {
 
           <footer className="footer">
             <span>
-              Aspect Glasswork · V1.7.14
+              Aspect Glasswork · V1.7.15
             </span>
 
             <span>
