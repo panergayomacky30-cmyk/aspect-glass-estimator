@@ -21,7 +21,7 @@ import type {
   StorefrontOpening,
 } from '../lib/types';
 
-// ASPECT GLASSWORK ESTIMATING STUDIO V1.7.19
+// ASPECT GLASSWORK ESTIMATING STUDIO V1.7.20
 // Blue and white theme, 13 Storefront glass specs, 8 Windows glass specs,
 // 20 Windows-only window types; unnumbered framing and door dropdowns.
 // Storefront framing AND door models now have an Other choice with a custom
@@ -30,6 +30,7 @@ import type {
 // New estimates in all workspaces prompt for Frame Finish; saved finishes are kept.
 // All workspaces support custom frame finishes; calculations are unchanged.
 // Existing estimating formulas, saved projects and model dropdowns are retained.
+// V1.7.20: Expanded Storefront Type choices, unified per-unit labels, sticky sidebar.
 // V1.7.19: Added simple Excel exports to Windows, Curtain Walls and Office Fit-Out.
 // V1.7.18: Corrected Storefront manufacturer surcharge (+) and glass sales tax (+).
 // County: Rockland 15%; Orange 20-25%; Sullivan 25-30%; Other custom rate.
@@ -300,6 +301,89 @@ const WINDOWS_GLASS_OPTIONS = [
   '1" Insulated Glass (1/4" Clear Temp + 1/4" Clear Temp)',
 ] as const;
 
+// STOREFRONT ONLY — Type choices grouped to match the reference list.
+// The descriptive selection is stored separately from the three legacy
+// pricing categories (fixed/single-door/double-door), so existing calculation
+// logic and saved-estimate data remain compatible.
+const STOREFRONT_TYPE_GROUPS = [
+  {
+    label: 'Core & Door Configurations',
+    options: [
+      'Fixed glazing',
+      'Single door',
+      'Double door',
+      'Uneven pair door (Active + Inactive leaf)',
+      'Single door with transom',
+      'Double door with transom',
+      'Single door with single sidelite',
+      'Single door with double sidelites',
+      'Single door with sidelite and transom',
+      'Single door with double sidelites and transom',
+      'Double door with single sidelite',
+      'Double door with double sidelites',
+      'Double door with sidelite and transom',
+      'Double door with double sidelites and transom',
+    ],
+  },
+  {
+    label: 'Specialty & Operable Entrance Doors',
+    options: [
+      'All-glass (frameless / Herculite) single door',
+      'All-glass (frameless / Herculite) double door',
+      'Single sliding storefront door',
+      'Bi-parting sliding storefront door',
+      'Bi-fold / folding storefront door',
+      'Revolving entrance door',
+      'Balanced entrance door',
+    ],
+  },
+  {
+    label: 'Glazing, Transom & Architectural Bays',
+    options: [
+      'Sidelite',
+      'Transom lite',
+      'Clerestory lite',
+      'Bulkhead / Knee-wall panel',
+      'Spandrel panel',
+      'Corner bay (90° / angled return)',
+      'Multi-bay fixed storefront wall',
+    ],
+  },
+  {
+    label: 'Operable & Service Inserts',
+    options: [
+      'Pass-thru / Transaction window (sliding or awning)',
+      'Operable awning insert',
+      'Operable hopper insert',
+      'Operable casement insert',
+      'Louver / Air intake panel',
+    ],
+  },
+] as const;
+
+const STOREFRONT_TYPE_OPTIONS: readonly string[] =
+  STOREFRONT_TYPE_GROUPS.flatMap(group => [...group.options]);
+
+function storefrontLegacyType(type: string): StorefrontOpening['openingType'] {
+  if (type.startsWith('Double door') || type.startsWith('Uneven pair door')) {
+    return 'double-door';
+  }
+  if (type.startsWith('Single door')) {
+    return 'single-door';
+  }
+  // Specialty, sliding, and frameless assemblies need individually supplied
+  // hardware prices: do not silently apply standard aluminum door packages.
+  return 'fixed';
+}
+
+function legacyStorefrontLabel(type: StorefrontOpening['openingType']): string {
+  return type === 'single-door'
+    ? 'Single door'
+    : type === 'double-door'
+      ? 'Double door'
+      : 'Fixed glazing';
+}
+
 // WINDOWS ONLY — the 19 preset window types shown in the supplied list,
 // followed by a 20th free-text Custom option. This is separate from the
 // legacy openingType used by pricing calculations, so window selections
@@ -553,6 +637,8 @@ function priceCategory(
 // =====================================================
 
 type Opening = StorefrontOpening & {
+  // Storefront-only descriptive Type, preserved in drafts and saved estimates.
+  storefrontType: string;
   // Window-specific configuration; stored with each estimate.
   windowType: WindowType;
   customWindowType: string;
@@ -570,6 +656,14 @@ function displayWindowType(o: Opening): string {
   if (o.windowType !== CUSTOM_WINDOW_TYPE) return o.windowType;
   const description = o.customWindowType.trim();
   return description ? `Custom — ${description}` : 'Custom';
+}
+
+function displayType(o: Opening, workspace: Workspace): string {
+  if (workspace === 'storefront') {
+    return o.storefrontType || legacyStorefrontLabel(o.openingType);
+  }
+  if (workspace === 'windows') return displayWindowType(o);
+  return formatOpeningType(o.openingType);
 }
 
 type Rules = PricingRules & {
@@ -819,6 +913,12 @@ function normalizeAppProject(
       return {
         ...o,
 
+        storefrontType:
+          typeof r.storefrontType === 'string' &&
+          STOREFRONT_TYPE_OPTIONS.includes(r.storefrontType)
+            ? r.storefrontType
+            : legacyStorefrontLabel(o.openingType),
+
         windowType:
           WINDOWS_WINDOW_TYPES.includes(r.windowType as WindowType)
             ? r.windowType as WindowType
@@ -960,6 +1060,7 @@ function freshOpening(
   return {
     ...base,
 
+    storefrontType: 'Fixed glazing',
     windowType: WINDOWS_WINDOW_TYPES[0],
     customWindowType: '',
 
@@ -1904,7 +2005,7 @@ function storefrontXlsx(project: Project, totals: Totals): Uint8Array {
   excelText(overview, 'C24', 'Worksheet', 31);
   totals.lines.forEach((line, i) => {
     const r = 25 + i;
-    excelText(overview, `A${r}`, `${line.opening.mark} — ${formatOpeningType(line.opening.openingType)}`, 23);
+    excelText(overview, `A${r}`, `${line.opening.mark} — ${displayType(line.opening, 'storefront')}`, 23);
     excelFormula(overview, `B${r}`, `'${unitNames[i]}'!B7`, line.finalPrice ?? 0, 4);
     excelText(overview, `C${r}`, unitNames[i], 27);
   });
@@ -1938,7 +2039,7 @@ function storefrontXlsx(project: Project, totals: Totals): Uint8Array {
     excelText(sheet, 'A3', 'Estimate Number', 28);
     excelText(sheet, 'B3', project.estimateNumber.trim() || 'Unnumbered Draft', 29);
     excelText(sheet, 'A4', 'Opening / Unit', 28);
-    excelText(sheet, 'B4', `${o.mark} — ${formatOpeningType(o.openingType)}`, 29);
+    excelText(sheet, 'B4', `${o.mark} — ${displayType(o, 'storefront')}`, 29);
     sheet.merges.push('B4:C4');
     excelText(sheet, 'A5', 'Frame System / Finish', 28);
     excelText(sheet, 'B5', `${project.framingSystem || 'Unspecified'} / ${project.finish || 'Unspecified'}`, 29);
@@ -2109,9 +2210,7 @@ function workspaceXlsx(project: Project, totals: Totals, workspace: Workspace): 
   excelText(overview, 'C24', 'Worksheet', 31);
   totals.lines.forEach((line, i) => {
     const row = 25 + i;
-    const typeName = workspace === 'windows'
-      ? displayWindowType(line.opening)
-      : formatOpeningType(line.opening.openingType);
+    const typeName = displayType(line.opening, workspace);
     excelText(overview, `A${row}`, `${line.opening.mark} — ${typeName}`, 23);
     excelFormula(overview, `B${row}`, `'${unitNames[i]}'!B7`, line.finalPrice ?? 0, 4);
     excelText(overview, `C${row}`, unitNames[i], 27);
@@ -2142,9 +2241,7 @@ function workspaceXlsx(project: Project, totals: Totals, workspace: Workspace): 
     excelText(sheet, 'A3', 'Estimate Number', 28);
     excelText(sheet, 'B3', project.estimateNumber.trim() || 'Unnumbered Draft', 29);
     excelText(sheet, 'A4', workspace === 'windows' ? 'Window / Type' : 'Opening / Unit', 28);
-    const typeName = workspace === 'windows'
-      ? displayWindowType(o)
-      : formatOpeningType(o.openingType);
+    const typeName = displayType(o, workspace);
     excelText(sheet, 'B4', `${o.mark} — ${typeName}`, 29);
     sheet.merges.push('B4:C4');
     excelText(sheet, 'A5', 'Frame System / Finish', 28);
@@ -2198,7 +2295,7 @@ function workspaceXlsx(project: Project, totals: Totals, workspace: Workspace): 
 
     excelText(sheet, 'A22', `${workspaceName.toUpperCase()} ADJUSTMENT RATES  |  EDITABLE`, 21);
     sheet.merges.push('A22:C22');
-    setting(23, 'Fixed Hardware Fee $ / Unit', p.hardwareFixedFee, 'One fixed hardware fee per opening mark, not per assembly', 25);
+    setting(23, 'Fixed Hardware Fee $ / Unit', p.hardwareFixedFee, 'One fixed hardware fee per unit mark, not per assembly', 25);
     setting(24, 'Hardware Tax %', p.hardwareTaxPct / 100, 'Tax on hardware cost plus the fixed fee');
     setting(25, 'Glass Discount %', p.glassDiscountPct / 100, 'Deducted from base glass cost in this workspace');
     setting(26, 'Risk %', p.riskPct / 100, 'Applied to total glass cost');
@@ -2729,7 +2826,7 @@ function OpeningFormula({
         Preliminary takeoff quantities.
         {workspace === 'storefront'
           ? ' Hardware is marked up by the selected county rate; glass is adjusted and taxed.'
-          : ' The fixed hardware fee is charged once per opening mark.'}
+          : ' The fixed hardware fee is charged once per unit mark.'}
         No material waste allowance is added.
       </p>
     </details>
@@ -3759,7 +3856,7 @@ export default function Home() {
       'Opening Mark',
       'Glass Specification',
       'Glass Style',
-      workspace === 'windows' ? 'Window Type' : 'Opening Type',
+      'Type',
       'Quantity',
       'Width in',
       'Height in',
@@ -3790,9 +3887,7 @@ export default function Home() {
       l.opening.glassSpecification,
       l.opening.glassStyle,
 
-      workspace === 'windows'
-        ? displayWindowType(l.opening)
-        : formatOpeningType(l.opening.openingType),
+      displayType(l.opening, workspace),
 
       l.opening.quantity,
       l.width,
@@ -3931,7 +4026,7 @@ export default function Home() {
         <div className="topbar-right">
           <span className="top-pill">
             <span className="green-dot" />
-            Browser-based · V1.7.19
+            Browser-based · V1.7.20
           </span>
 
           <span className="autosave">
@@ -4036,7 +4131,7 @@ export default function Home() {
 
           <div className="sidebar-help">
             <strong>
-              Estimator V1.7.19
+              Estimator V1.7.20
             </strong>
 
             <p>
@@ -4071,7 +4166,7 @@ export default function Home() {
               <p className="page-desc">
                 {tab !== 'pricing' &&
                 tab !== 'saved'
-                  ? 'Set glass, hardware, OPEX and Gross Net Profit % for each opening separately.'
+                  ? 'Set glass, hardware, OPEX and Gross Net Profit % for each unit separately.'
                   : tab === 'pricing'
                     ? 'Four separate directories: Storefront, Windows, Curtain Walls, and Office Fit-Out.'
                     : 'Search and reopen your saved projects.'}
@@ -4154,7 +4249,7 @@ export default function Home() {
 
                 {' '}
                 Profit % and OPEX are set individually
-                per opening. No material waste allowance
+                per unit. No material waste allowance
                 is applied. Confirm supplier rates and
                 scope before quoting in Smart Glazier.
               </div>
@@ -4765,9 +4860,7 @@ export default function Home() {
 
                             <span className="opening-category">
                               {o.mark} {' · '}
-                              {workspace === 'windows'
-                                ? displayWindowType(o)
-                                : formatOpeningType(o.openingType)}
+                              {displayType(o, workspace)}
                             </span>
                           </div>
 
@@ -4814,13 +4907,7 @@ export default function Home() {
                             />
                           </Field>
 
-                          <Field
-                            label={
-                              workspace === 'windows'
-                                ? 'Window Type'
-                                : 'Opening type'
-                            }
-                          >
+                          <Field label="Type">
                             {workspace === 'windows' ? (
                               <>
                                 <select
@@ -4857,6 +4944,29 @@ export default function Home() {
                                   />
                                 )}
                               </>
+                            ) : workspace === 'storefront' ? (
+                              <select
+                                className="input"
+                                aria-label="Storefront Type"
+                                value={o.storefrontType || legacyStorefrontLabel(o.openingType)}
+                                onChange={e => {
+                                  const selected = e.target.value;
+                                  setOpening(o.id, {
+                                    storefrontType: selected,
+                                    openingType: storefrontLegacyType(selected),
+                                  });
+                                }}
+                              >
+                                {STOREFRONT_TYPE_GROUPS.map(group => (
+                                  <optgroup key={group.label} label={group.label}>
+                                    {group.options.map(type => (
+                                      <option key={type} value={type}>
+                                        {type}
+                                      </option>
+                                    ))}
+                                  </optgroup>
+                                ))}
+                              </select>
                             ) : (
                               <select
                                 className="input"
@@ -5267,7 +5377,7 @@ export default function Home() {
 
                           <Field
                             label="TARGET (GROSS) NET PROFIT %"
-                            hint="Enter your percentage for this opening (below 100)."
+                            hint="Enter your percentage for this unit (below 100)."
                           >
                             <MarginInput
                               value={
@@ -5456,7 +5566,7 @@ export default function Home() {
                         marginBottom: 7,
                       }}
                     >
-                      Choose opening to review
+                      Choose unit to review
                     </label>
 
                     <select
@@ -6638,7 +6748,7 @@ export default function Home() {
 
                       <p className="panel-subtitle">
                         Set OPEX and (gross) Net Profit %
-                        independently for each opening
+                        independently for each unit
                         in the active workspace.
                         There is no global profit target.
                       </p>
@@ -7046,7 +7156,7 @@ export default function Home() {
 
           <footer className="footer">
             <span>
-              Aspect Glasswork · V1.7.19
+              Aspect Glasswork · V1.7.20
             </span>
 
             <span>

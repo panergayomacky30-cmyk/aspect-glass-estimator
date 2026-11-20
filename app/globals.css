@@ -237,3 +237,19 @@ details[style] strong[style*="color"] { color: #1766a4 !important; }
 @media print {
   .summary-card { background: #102b4e !important; }
 }
+
+/* V1.7.20 — Keep the workspace directory visible while scrolling estimates.
+   Header is 76px tall on desktop. The sidebar scrolls internally if needed. */
+@media (min-width: 1051px) {
+  .shell > .sidebar {
+    position: sticky;
+    top: 76px;
+    height: calc(100vh - 76px);
+    min-height: 0;
+    align-self: flex-start;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    scrollbar-width: thin;
+    z-index: 3;
+  }
+}
