@@ -21,7 +21,7 @@ import type {
   StorefrontOpening,
 } from '../lib/types';
 
-// ASPECT GLASSWORK ESTIMATING STUDIO V1.7.21
+// ASPECT GLASSWORK ESTIMATING STUDIO V1.7.22
 // Blue and white theme, 13 Storefront glass specs, 8 Windows glass specs,
 // 20 Windows-only window types; unnumbered framing and door dropdowns.
 // Storefront framing AND door models now have an Other choice with a custom
@@ -30,6 +30,8 @@ import type {
 // New estimates in all workspaces prompt for Frame Finish; saved finishes are kept.
 // All workspaces support custom frame finishes; calculations are unchanged.
 // Existing estimating formulas, saved projects and model dropdowns are retained.
+// V1.7.22: Windows now uses Storefront county/hardware markup and glass
+// manufacturer surcharge + sales tax pricing, including live worksheets and Excel.
 // V1.7.21: Added Google Identity Services OAuth + Google Sheets/Drive API export.
 // V1.7.20: Expanded Storefront Type choices, unified per-unit labels, sticky sidebar.
 // V1.7.19: Added simple Excel exports to Windows, Curtain Walls and Office Fit-Out.
@@ -38,7 +40,7 @@ import type {
 // Storefront glass: cost × (1 + manufacturer surcharge) × (1 + glass sales tax).
 // Live breakdown, CSV and simple Excel formulas use the same Storefront computation.
 // For saved-estimate compatibility, Storefront keeps its surcharge in the legacy
-// glassDiscountPct data field; non-Storefront discounts remain unchanged.
+// glassDiscountPct data field; Curtain Walls and Office Fit-Out retain discounts.
 // Other workspaces retain their existing calculation formulas and settings.
 
 // =====================================================
@@ -53,6 +55,11 @@ const WORKSPACES = [
 ] as const;
 
 type Workspace = (typeof WORKSPACES)[number];
+// Storefront and Windows use identical pricing FORMULAS, but every workspace
+// maintains its own rates and project county independently.
+function usesCountyPricing(workspace: Workspace): boolean {
+  return workspace === 'storefront' || workspace === 'windows';
+}
 type Tab = Workspace | 'pricing' | 'saved';
 type Mode = 'calculated' | 'manual';
 type GlassStyle = 'Annealed' | 'Tempered';
@@ -674,7 +681,9 @@ type Rules = PricingRules & {
   glassDiscountPct: number;
   riskPct: number;
   ccSurchargePct: number;
-  // Storefront-only rates; stored in this workspace's independent pricing object.
+  // County/surcharge rates are kept independently in each workspace's pricing.
+  // The legacy names remain so older Storefront estimates keep loading.
+  windowsPricingMode?: 'county-surcharge-v1';
   storefrontCounty: StorefrontCounty;
   storefrontCountyRatePct: number | null;
   storefrontGlassSalesTaxPct: number;
@@ -1038,6 +1047,27 @@ function normalizeAppProject(
         rp.storefrontGlassSalesTaxPct,
         8.875
       ),
+      windowsPricingMode: rp.windowsPricingMode === 'county-surcharge-v1'
+        ? 'county-surcharge-v1' : undefined,
+    },
+  };
+}
+
+// Migrate only pre-V1.7.22 Windows projects. The old Windows field represented
+// a DISCOUNT; it must never silently become a manufacturer SURCHARGE.
+// Existing windows, glass specs, rates, costs, finish and markup settings stay.
+// A county must be selected for each estimate under the new calculation.
+function upgradeWindowsPricing(project: Project): Project {
+  if (project.pricing.windowsPricingMode === 'county-surcharge-v1') return project;
+  return {
+    ...project,
+    pricing: {
+      ...project.pricing,
+      windowsPricingMode: 'county-surcharge-v1',
+      storefrontCounty: '',
+      storefrontCountyRatePct: null,
+      glassDiscountPct: 15.725,
+      storefrontGlassSalesTaxPct: 8.875,
     },
   };
 }
@@ -1131,13 +1161,16 @@ function freshFor(
 
   project.storefrontDoorModel = '';
 
-  if (workspace === 'storefront') {
+  if (usesCountyPricing(workspace)) {
     project.pricing.storefrontCounty = '';
     project.pricing.storefrontCountyRatePct = null;
-    project.pricing.glassDiscountPct = 15.725; // Storefront manufacturer surcharge (added)
+    project.pricing.glassDiscountPct = 15.725; // Manufacturer surcharge (added)
     project.pricing.storefrontGlassSalesTaxPct = 8.875;
     project.pricing.riskPct = 10;
     project.pricing.ccSurchargePct = 8.5;
+    if (workspace === 'windows') {
+      project.pricing.windowsPricingMode = 'county-surcharge-v1';
+    }
   }
 
   return project;
@@ -1206,7 +1239,7 @@ function calculate(
 
   for (const [name, value] of [
     ['Hardware tax', p.hardwareTaxPct],
-    [workspace === 'storefront' ? 'Glass manufacturer surcharge' : 'Glass discount', p.glassDiscountPct],
+    [usesCountyPricing(workspace) ? 'Glass manufacturer surcharge' : 'Glass discount', p.glassDiscountPct],
     ['Risk', p.riskPct],
     ['CC surcharge', p.ccSurchargePct],
   ] as [string, number][]) {
@@ -1221,17 +1254,17 @@ function calculate(
     }
   }
 
-  // These requirements are exclusive to the Storefront workspace.
-  const countyRate = workspace === 'storefront' ? storefrontCountyRate(p) : null;
-  if (workspace === 'storefront') {
+  // County and glass sales tax validation applies to Storefront and Windows.
+  const countyRate = usesCountyPricing(workspace) ? storefrontCountyRate(p) : null;
+  if (usesCountyPricing(workspace)) {
     if (p.storefrontCounty === '') {
-      errors.push('Storefront: select the project county for hardware markup.');
+      errors.push(`${WORKSPACE_NAMES[workspace]}: select the project county for hardware markup.`);
     } else if (countyRate === null) {
       errors.push(`${p.storefrontCounty}: enter a valid county markup rate (${storefrontCountyRateHint(p.storefrontCounty)}).`);
     }
     if (!Number.isFinite(p.storefrontGlassSalesTaxPct) ||
         p.storefrontGlassSalesTaxPct < 0 || p.storefrontGlassSalesTaxPct > 100) {
-      errors.push('Storefront glass sales tax must be between 0% and 100%.');
+      errors.push(`${WORKSPACE_NAMES[workspace]} glass sales tax must be between 0% and 100%.`);
     }
   }
 
@@ -1412,11 +1445,10 @@ function calculate(
             o.hardwareAllowance
           ) * qty;
 
-    // Storefront-only computation supplied by Aspect Glasswork:
-    // hardware × (1 + county markup)
-    // glass × (1 + manufacturer surcharge) × (1 + glass sales tax)
-    // Other workspaces retain the previous fixed-fee, tax and discount rules.
-    if (workspace === 'storefront' && (
+    // Storefront AND Windows: hardware × (1 + county markup).
+    // Glass × (1 + manufacturer surcharge) × (1 + glass sales tax).
+    // Curtain Walls and Office Fit-Out keep their original pricing.
+    if (usesCountyPricing(workspace) && (
       countyRate === null ||
       !Number.isFinite(p.storefrontGlassSalesTaxPct) ||
       p.storefrontGlassSalesTaxPct < 0 || p.storefrontGlassSalesTaxPct > 100 ||
@@ -1426,14 +1458,14 @@ function calculate(
       !Number.isFinite(p.ccSurchargePct) ||
       p.ccSurchargePct < 0 || p.ccSurchargePct > 100
     )) {
-      continue; // Do not generate calculated prices from invalid Storefront rates.
+      continue; // Do not generate calculated prices with invalid county/surcharge rates.
     }
 
-    const totalHardwareCost = workspace === 'storefront'
+    const totalHardwareCost = usesCountyPricing(workspace)
       ? hardwareCost * (1 + (countyRate ?? 0) / 100)
       : (hardwareCost + p.hardwareFixedFee) * (1 + p.hardwareTaxPct / 100);
 
-    const totalGlassCost = workspace === 'storefront'
+    const totalGlassCost = usesCountyPricing(workspace)
       ? glassCost * (1 + p.glassDiscountPct / 100) *
         (1 + p.storefrontGlassSalesTaxPct / 100)
       : glassCost * (1 - p.glassDiscountPct / 100);
@@ -1960,26 +1992,27 @@ function packageExcelSheets(sheets: ExcelSheet[]): Uint8Array {
   ]);
 }
 
-function storefrontXlsx(project: Project, totals: Totals): Uint8Array {
+function storefrontXlsx(project: Project, totals: Totals, workspace: 'storefront' | 'windows' = 'storefront'): Uint8Array {
+  const workspaceName = WORKSPACE_NAMES[workspace];
   if (!hasExportableCalculations(project, totals)) throw new Error("Complete each unit's dimensions, costs and gross net profit % before exporting Excel.");
   const sheets: ExcelSheet[] = [];
-  const overview = newExcelSheet('Storefront Summary');
+  const overview = newExcelSheet(`${workspaceName} Summary`);
   sheets.push(overview);
   const unitNames = totals.lines.map((_, i) => `Unit ${i + 1}`);
   const sumRefs = (row: number): string =>
     `SUM(${unitNames.map(name => `'${name}'!B${row}`).join(',')})`;
 
-  excelText(overview, 'A1', 'ASPECT GLASSWORK  |  STOREFRONT ESTIMATE', 1);
+  excelText(overview, 'A1', `ASPECT GLASSWORK  |  ${workspaceName.toUpperCase()} ESTIMATE`, 1);
   overview.merges.push('A1:C1');
-  excelText(overview, 'A2', project.projectName.trim() || 'Untitled Storefront Draft', 2);
+  excelText(overview, 'A2', project.projectName.trim() || `Untitled ${workspaceName} Draft`, 2);
   overview.merges.push('A2:C2');
   excelText(overview, 'A3', 'Estimate Number', 28);
   excelText(overview, 'B3', project.estimateNumber.trim() || 'Unnumbered Draft', 29);
   excelText(overview, 'A4', 'Client / Contractor', 28);
   excelText(overview, 'B4', project.clientName || 'Not specified', 29);
   overview.merges.push('B4:C4');
-  excelText(overview, 'A5', 'Framing System', 28);
-  excelText(overview, 'B5', project.framingSystem || 'Not specified', 29);
+  excelText(overview, 'A5', workspace === 'windows' ? 'Framing System / Finish' : 'Framing System', 28);
+  excelText(overview, 'B5', workspace === 'windows' ? `${project.framingSystem || 'Not specified'} / ${project.finish || 'Not specified'}` : (project.framingSystem || 'Not specified'), 29);
   overview.merges.push('B5:C5');
 
   const totalRows: [number, string, number, 'price' | 'final' | 'plain' | 'subtotal' | 'opex' | 'risk' | 'total' | 'net' | 'percent'][] = [
@@ -1999,14 +2032,14 @@ function storefrontXlsx(project: Project, totals: Totals): Uint8Array {
     storefrontSummaryRow(overview, row, name, kind === 'percent' ? 'IFERROR(B19/B6,0)' : sumRefs(row), value, kind);
   }
   excelText(overview, 'C7', 'CC surcharge only — no separate commission is modeled.', 30);
-  excelText(overview, 'A23', 'STOREFRONT UNIT REGISTER', 21);
+  excelText(overview, 'A23', `${workspaceName.toUpperCase()} UNIT REGISTER`, 21);
   overview.merges.push('A23:C23');
-  excelText(overview, 'A24', 'Opening Mark / Type', 31);
+  excelText(overview, 'A24', `${workspace === 'windows' ? 'Window' : 'Opening'} Mark / Type`, 31);
   excelText(overview, 'B24', 'Final Price with CC', 31);
   excelText(overview, 'C24', 'Worksheet', 31);
   totals.lines.forEach((line, i) => {
     const r = 25 + i;
-    excelText(overview, `A${r}`, `${line.opening.mark} — ${displayType(line.opening, 'storefront')}`, 23);
+    excelText(overview, `A${r}`, `${line.opening.mark} — ${displayType(line.opening, workspace)}`, 23);
     excelFormula(overview, `B${r}`, `'${unitNames[i]}'!B7`, line.finalPrice ?? 0, 4);
     excelText(overview, `C${r}`, unitNames[i], 27);
   });
@@ -2033,14 +2066,14 @@ function storefrontXlsx(project: Project, totals: Totals): Uint8Array {
     const p = project.pricing;
     const sheet = newExcelSheet(unitNames[index]);
     sheets.push(sheet);
-    excelText(sheet, 'A1', 'ASPECT GLASSWORK  |  STOREFRONT UNIT', 1);
+    excelText(sheet, 'A1', `ASPECT GLASSWORK  |  ${workspaceName.toUpperCase()} UNIT`, 1);
     sheet.merges.push('A1:C1');
-    excelText(sheet, 'A2', `${project.projectName.trim() || 'Untitled Storefront Draft'}  |  ${o.mark}`, 2);
+    excelText(sheet, 'A2', `${project.projectName.trim() || `Untitled ${workspaceName} Draft`}  |  ${o.mark}`, 2);
     sheet.merges.push('A2:C2');
     excelText(sheet, 'A3', 'Estimate Number', 28);
     excelText(sheet, 'B3', project.estimateNumber.trim() || 'Unnumbered Draft', 29);
-    excelText(sheet, 'A4', 'Opening / Unit', 28);
-    excelText(sheet, 'B4', `${o.mark} — ${displayType(o, 'storefront')}`, 29);
+    excelText(sheet, 'A4', workspace === 'windows' ? 'Window / Type' : 'Opening / Unit', 28);
+    excelText(sheet, 'B4', `${o.mark} — ${displayType(o, workspace)}`, 29);
     sheet.merges.push('B4:C4');
     excelText(sheet, 'A5', 'Frame System / Finish', 28);
     excelText(sheet, 'B5', `${project.framingSystem || 'Unspecified'} / ${project.finish || 'Unspecified'}`, 29);
@@ -2089,7 +2122,7 @@ function storefrontXlsx(project: Project, totals: Totals): Uint8Array {
     excelNumber(sheet, 'B20', (o.targetGrossNetPct ?? 0) / 100, 20);
 
     // Visible, short-form Storefront workbook rates, directly below the summary.
-    excelText(sheet, 'A22', 'STOREFRONT ADJUSTMENT RATES  |  EDITABLE', 21);
+    excelText(sheet, 'A22', `${workspaceName.toUpperCase()} ADJUSTMENT RATES  |  EDITABLE`, 21);
     sheet.merges.push('A22:C22');
     const setting = (row: number, label: string, value: number, style: number, detail: string) => {
       excelText(sheet, `A${row}`, label, 23);
@@ -2140,7 +2173,7 @@ function storefrontXlsx(project: Project, totals: Totals): Uint8Array {
     sheet.merges.push('A50:C50');
     excelText(sheet, 'A51', 'Width, height, glass SF and frame LF are snapshots; re-export if geometry or quantity changes.', 30);
     sheet.merges.push('A51:C51');
-    excelText(sheet, 'A52', 'Storefront: hardware × county markup; glass × (1 + manufacturer surcharge) × (1 + sales tax).', 30);
+    excelText(sheet, 'A52', `${workspaceName}: hardware × (1 + county markup); glass × (1 + manufacturer surcharge) × (1 + sales tax).`, 30);
     sheet.merges.push('A52:C52');
     excelText(sheet, 'A53', 'The app is the source of truth; no material waste allowance is included.', 30);
     sheet.merges.push('A53:C53');
@@ -2153,12 +2186,12 @@ function storefrontXlsx(project: Project, totals: Totals): Uint8Array {
   return packageExcelSheets(sheets);
 }
 
-// Simple Excel report for Windows, Curtain Walls and Office Fit-Out.
-// Storefront retains its specialized county and manufacturer surcharge formulas.
-// Base manual costs are exported as typed values, and calculated costs use short,
-// visible formulas. Non-Storefront rates mirror calculate() exactly.
+// Storefront AND Windows share the specialized county/surcharge workbook.
+// Curtain Walls and Office Fit-Out retain their original formulas.
 function workspaceXlsx(project: Project, totals: Totals, workspace: Workspace): Uint8Array {
-  if (workspace === 'storefront') return storefrontXlsx(project, totals);
+  if (workspace === 'storefront' || workspace === 'windows') {
+    return storefrontXlsx(project, totals, workspace);
+  }
   if (!hasExportableCalculations(project, totals)) {
     throw new Error("Complete each unit's dimensions, costs and gross net profit % before exporting Excel.");
   }
@@ -2831,7 +2864,7 @@ function Worksheet({
       <Detail
         title="Total Hardware Cost"
         formula={
-          workspace === 'storefront'
+          usesCountyPricing(workspace)
             ? `${currency(l.hardwareCost)} × (1 + ${pct(storefrontCountyRate(p) ?? 0)}% ${p.storefrontCounty} markup)`
             : `(${currency(l.hardwareCost)} + ` +
               `${currency(p.hardwareFixedFee)}) × ` +
@@ -2856,7 +2889,7 @@ function Worksheet({
       <Detail
         title="Total Glass Cost"
         formula={
-          workspace === 'storefront'
+          usesCountyPricing(workspace)
             ? `${currency(l.glassCost)} × ` +
               `(1 + ${pct(p.glassDiscountPct)}% manufacturer surcharge) × ` +
               `(1 + ${pct(p.storefrontGlassSalesTaxPct)}% glass sales tax)`
@@ -2988,7 +3021,7 @@ function OpeningFormula({
         }}
       >
         Preliminary takeoff quantities.
-        {workspace === 'storefront'
+        {usesCountyPricing(workspace)
           ? ' Hardware is marked up by the selected county rate; glass is adjusted and taxed.'
           : ' The fixed hardware fee is charged once per unit mark.'}
         No material waste allowance is added.
@@ -3190,8 +3223,10 @@ export default function Home() {
         );
 
         for (const name of WORKSPACES) {
-          const normalized =
-            normalizeAppProject(raw[name]);
+          const loaded = normalizeAppProject(raw[name]);
+          const normalized = loaded && name === 'windows'
+            ? upgradeWindowsPricing(loaded)
+            : loaded;
 
           if (normalized) {
             // Previously stored blank/legacy Windows defaults should not
@@ -3267,7 +3302,9 @@ export default function Home() {
                     ? r.updatedAt
                     : new Date().toISOString(),
 
-                project: pr,
+                project: isWorkspace(r.workspace) && r.workspace === 'windows'
+                  ? upgradeWindowsPricing(pr)
+                  : pr,
               }];
             });
         }
@@ -3723,8 +3760,8 @@ export default function Home() {
       pricing: {
         ...structuredClone(old.pricing),
         // County markup is project-specific: request a new county selection.
-        storefrontCounty: workspace === 'storefront' ? '' : old.pricing.storefrontCounty,
-        storefrontCountyRatePct: workspace === 'storefront' ? null : old.pricing.storefrontCountyRatePct,
+        storefrontCounty: usesCountyPricing(workspace) ? '' : old.pricing.storefrontCounty,
+        storefrontCountyRatePct: usesCountyPricing(workspace) ? null : old.pricing.storefrontCountyRatePct,
       },
     }));
 
@@ -3927,7 +3964,7 @@ export default function Home() {
 
       setDrafts(old => ({
         ...old,
-        [target]: pr,
+        [target]: target === 'windows' ? upgradeWindowsPricing(pr) : pr,
       }));
 
       setActiveIds(old => {
@@ -4015,7 +4052,9 @@ export default function Home() {
                 ? r.updatedAt
                 : now,
 
-            project: pr,
+            project: isWorkspace(r.workspace) && r.workspace === 'windows'
+              ? upgradeWindowsPricing(pr)
+              : pr,
           };
         }
       );
@@ -4132,8 +4171,8 @@ export default function Home() {
   }
 
   // Excel export is available in all four workspaces.
-  // Storefront retains its specialized formulas; other workspaces mirror
-  // their existing hardware-tax and glass-discount computations.
+  // Storefront and Windows share county/surcharge formulas; the other two
+  // workspaces retain their hardware-tax and glass-discount computations.
   function exportWorkspaceExcel(): void {
     if (!exportReady) {
       setNotice('Complete the dimensions, costing and target gross net profit % for every unit before exporting Excel.');
@@ -4282,7 +4321,7 @@ export default function Home() {
         <div className="topbar-right">
           <span className="top-pill">
             <span className="green-dot" />
-            Browser-based · V1.7.21
+            Browser-based · V1.7.22
           </span>
 
           <span className="autosave">
@@ -4387,7 +4426,7 @@ export default function Home() {
 
           <div className="sidebar-help">
             <strong>
-              Estimator V1.7.21
+              Estimator V1.7.22
             </strong>
 
             <p>
@@ -4962,15 +5001,15 @@ export default function Home() {
                     </div>
                   </div>
 
-                  {workspace === 'storefront' && (
+                  {usesCountyPricing(workspace) && (
                     <div className="formula-panel" style={{ marginTop: 18 }}>
-                      <strong>Storefront Pricing Adjustments</strong>
-                      <p>These rates affect Storefront units only. The county rate applies to hardware; the manufacturer surcharge and glass sales tax are added to glass cost.</p>
+                      <strong>{WORKSPACE_NAMES[workspace]} Pricing Adjustments</strong>
+                      <p>These rates affect {WORKSPACE_NAMES[workspace]} units only. The county rate applies to hardware; the manufacturer surcharge and glass sales tax are added to glass cost.</p>
                       <div className="form-grid" style={{ marginTop: 12 }}>
                         <Field label="County / Hardware Markup">
                           <select
                             className="input"
-                            aria-label="Storefront project county"
+                            aria-label={`${WORKSPACE_NAMES[workspace]} project county`}
                             value={p.storefrontCounty}
                             onChange={e => {
                               const county = e.target.value as StorefrontCounty;
@@ -6921,15 +6960,15 @@ export default function Home() {
                           </span>
 
                           <h2>
-                            Fees, Tax, Discounts &amp; Risk
+                            {usesCountyPricing(workspace) ? 'Fees, Taxes & Risk' : 'Fees, Tax, Discounts & Risk'}
                           </h2>
                         </div>
                       </div>
 
                       <div className="form-grid">
-                        {workspace === 'storefront' && (
+                        {usesCountyPricing(workspace) && (
                           <>
-                            <Field label="County hardware markup %" hint={`Selected county: ${p.storefrontCounty || 'Not selected'}. Set the county and markup in Storefront Project Information.`}>
+                            <Field label="County hardware markup %" hint={`Selected county: ${p.storefrontCounty || 'Not selected'}. Set the county and markup in the active workspace Project Information.`}>
                               <input className="input" readOnly value={storefrontCountyRate(p) === null ? 'Select county in project details' : `${storefrontCountyRate(p)}%`} />
                             </Field>
                             <Field label="Glass manufacturer surcharge (%)" hint="Editable by manufacturer; 15.725% default, applied as (1 + rate).">
@@ -6942,7 +6981,7 @@ export default function Home() {
                             </Field>
                           </>
                         )}
-                        {workspace !== 'storefront' && (<>
+                        {!usesCountyPricing(workspace) && (<>
                         <Field
                           label="Fixed hardware fee $ / opening mark"
                           hint="Added once per mark; default $15."
@@ -6992,7 +7031,7 @@ export default function Home() {
 
                         </>)}
 
-                        <Field label={workspace === 'storefront' ? 'Risk % of total glass cost' : 'Risk % of discounted glass'}>
+                        <Field label={usesCountyPricing(workspace) ? 'Risk % of total glass cost' : 'Risk % of discounted glass'}>
                           <Num
                             value={
                               p.riskPct
@@ -7447,7 +7486,7 @@ export default function Home() {
 
           <footer className="footer">
             <span>
-              Aspect Glasswork · V1.7.21
+              Aspect Glasswork · V1.7.22
             </span>
 
             <span>
