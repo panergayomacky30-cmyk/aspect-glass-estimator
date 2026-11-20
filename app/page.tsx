@@ -21,7 +21,7 @@ import type {
   StorefrontOpening,
 } from '../lib/types';
 
-// ASPECT GLASSWORK ESTIMATING STUDIO V1.7.20
+// ASPECT GLASSWORK ESTIMATING STUDIO V1.7.21
 // Blue and white theme, 13 Storefront glass specs, 8 Windows glass specs,
 // 20 Windows-only window types; unnumbered framing and door dropdowns.
 // Storefront framing AND door models now have an Other choice with a custom
@@ -30,6 +30,7 @@ import type {
 // New estimates in all workspaces prompt for Frame Finish; saved finishes are kept.
 // All workspaces support custom frame finishes; calculations are unchanged.
 // Existing estimating formulas, saved projects and model dropdowns are retained.
+// V1.7.21: Added Google Identity Services OAuth + Google Sheets/Drive API export.
 // V1.7.20: Expanded Storefront Type choices, unified per-unit labels, sticky sidebar.
 // V1.7.19: Added simple Excel exports to Windows, Curtain Walls and Office Fit-Out.
 // V1.7.18: Corrected Storefront manufacturer surcharge (+) and glass sales tax (+).
@@ -2354,6 +2355,169 @@ function downloadStorefrontXlsx(name: string, bytes: Uint8Array): void {
 }
 
 // =====================================================
+// DIRECT GOOGLE SHEETS EXPORT (OAuth + Google Drive/Sheets APIs)
+// OAuth token remains in memory only; never store or log the token.
+// drive.file scope limits the app to files it creates/opens.
+// Reuses the EXACT XLSX generated for the standard Excel export,
+// then converts it into a native, editable Google spreadsheet.
+// =====================================================
+
+const GOOGLE_SHEETS_SCOPE = 'https://www.googleapis.com/auth/drive.file';
+const GOOGLE_SHEETS_MIME = 'application/vnd.google-apps.spreadsheet';
+const EXCEL_XLSX_MIME = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+const GOOGLE_IDENTITY_SCRIPT = 'https://accounts.google.com/gsi/client';
+
+type GoogleOAuthTokenResponse = {
+  access_token?: string;
+  error?: string;
+  error_description?: string;
+};
+
+type GoogleOAuthPopupError = {
+  type?: string;
+  message?: string;
+};
+
+type GoogleOAuthApi = {
+  initTokenClient: (options: {
+    client_id: string;
+    scope: string;
+    callback: (response: GoogleOAuthTokenResponse) => void;
+    error_callback?: (error: GoogleOAuthPopupError) => void;
+  }) => {
+    requestAccessToken: (overrides?: { prompt?: string }) => void;
+  };
+};
+
+function googleOAuthApi(): GoogleOAuthApi | undefined {
+  if (typeof window === 'undefined') return undefined;
+  const browser = window as Window & {
+    google?: { accounts?: { oauth2?: GoogleOAuthApi } };
+  };
+  return browser.google?.accounts?.oauth2;
+}
+
+// IMPORTANT: Must be called directly from the button event, before any await,
+// so the Google authorization popup is allowed by the browser.
+function requestGoogleSheetsToken(oauth: GoogleOAuthApi, clientId: string): Promise<string> {
+  return new Promise<string>((resolve, reject) => {
+    try {
+      const client = oauth.initTokenClient({
+        client_id: clientId,
+        scope: GOOGLE_SHEETS_SCOPE,
+        callback: (result) => {
+          if (result.error || !result.access_token) {
+            reject(new Error(result.error_description || result.error || 'Google authorization was not completed.'));
+            return;
+          }
+          resolve(result.access_token);
+        },
+        error_callback: (error) => {
+          const detail = error.message || error.type || 'Google sign-in popup was blocked or closed.';
+          reject(new Error(detail));
+        },
+      });
+      client.requestAccessToken({ prompt: 'consent' });
+    } catch (error) {
+      reject(error);
+    }
+  });
+}
+
+type GoogleSheetsExportResult = {
+  url: string;
+  warning?: string;
+};
+
+async function uploadWorkbookAsGoogleSheet(
+  accessToken: string,
+  spreadsheetName: string,
+  xlsxBytes: Uint8Array
+): Promise<GoogleSheetsExportResult> {
+  if (xlsxBytes.byteLength > 5 * 1024 * 1024) {
+    throw new Error('The workbook exceeds the 5 MB Google multipart upload limit. Download the Excel file and import it into Google Sheets instead.');
+  }
+
+  // Multipart/related contains JSON metadata + the XLSX binary. Drive's
+  // target MIME type converts the file into a native Google Spreadsheet.
+  const boundary = `aspect_sheet_${Date.now()}_${Math.random().toString(36).slice(2)}`;
+  const metadata = JSON.stringify({
+    name: spreadsheetName,
+    mimeType: GOOGLE_SHEETS_MIME,
+  });
+  const binary = xlsxBytes.buffer.slice(
+    xlsxBytes.byteOffset,
+    xlsxBytes.byteOffset + xlsxBytes.byteLength
+  ) as ArrayBuffer;
+  const multipartBody = new Blob([
+    `--${boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${metadata}\r\n`,
+    `--${boundary}\r\nContent-Type: ${EXCEL_XLSX_MIME}\r\n\r\n`,
+    binary,
+    `\r\n--${boundary}--\r\n`,
+  ], { type: `multipart/related; boundary=${boundary}` });
+
+  const uploadResponse = await fetch(
+    'https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id,name,mimeType,webViewLink',
+    {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        'Content-Type': `multipart/related; boundary=${boundary}`,
+      },
+      body: multipartBody,
+    }
+  );
+
+  const uploadBody = await uploadResponse.json().catch(() => null) as {
+    id?: string;
+    mimeType?: string;
+    webViewLink?: string;
+    error?: { message?: string };
+  } | null;
+
+  if (!uploadResponse.ok) {
+    const details = uploadBody?.error?.message || `Google Drive upload failed (HTTP ${uploadResponse.status}).`;
+    throw new Error(details);
+  }
+  if (!uploadBody?.id) {
+    throw new Error('Google Drive returned no spreadsheet ID. Please check Google Drive before retrying.');
+  }
+
+  const fallbackUrl = `https://docs.google.com/spreadsheets/d/${encodeURIComponent(uploadBody.id)}/edit`;
+  if (uploadBody.mimeType && uploadBody.mimeType !== GOOGLE_SHEETS_MIME) {
+    return {
+      url: uploadBody.webViewLink || fallbackUrl,
+      warning: 'Google Drive uploaded the file but did not confirm conversion to Google Sheets. Check the file type in Drive.',
+    };
+  }
+
+  // Verify the converted file through the Sheets API. The narrower
+  // drive.file scope is accepted by spreadsheets.get for app-created files.
+  // A verification error must NOT hide a file that Drive already created.
+  try {
+    const sheetResponse = await fetch(
+      `https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(uploadBody.id)}?fields=spreadsheetId,spreadsheetUrl,properties(title),sheets(properties(title))`,
+      { headers: { Authorization: `Bearer ${accessToken}` } }
+    );
+    if (!sheetResponse.ok) {
+      return {
+        url: uploadBody.webViewLink || fallbackUrl,
+        warning: 'Sheet created, but Google Sheets API verification failed. Enable the Google Sheets API in your Google Cloud project.',
+      };
+    }
+    const verified = await sheetResponse.json() as {
+      spreadsheetUrl?: string;
+    };
+    return { url: verified.spreadsheetUrl || uploadBody.webViewLink || fallbackUrl };
+  } catch {
+    return {
+      url: uploadBody.webViewLink || fallbackUrl,
+      warning: 'Sheet created, but the confirmation request could not finish. Open the link to verify it.',
+    };
+  }
+}
+
+// =====================================================
 // INPUT COMPONENTS
 // =====================================================
 
@@ -2895,6 +3059,10 @@ export default function Home() {
   const [notice, setNotice] =
     useState('');
 
+  const [googleSdkReady, setGoogleSdkReady] = useState(false);
+  const [googleExporting, setGoogleExporting] = useState(false);
+  const [createdGoogleSheetUrl, setCreatedGoogleSheetUrl] = useState('');
+
   const [search, setSearch] =
     useState('');
 
@@ -2965,6 +3133,43 @@ export default function Home() {
           a.updatedAt
         )
     );
+
+  // Load Google Identity Services once; no account information is requested
+  // until the user clicks Export to Google Sheets.
+  useEffect(() => {
+    if (googleOAuthApi()) {
+      setGoogleSdkReady(true);
+      return;
+    }
+
+    let script = document.querySelector<HTMLScriptElement>(
+      'script[data-aspect-google-identity="true"]'
+    );
+    const onLoad = () => setGoogleSdkReady(Boolean(googleOAuthApi()));
+    const onError = () => setGoogleSdkReady(false);
+    if (!script) {
+      script = document.createElement('script');
+      script.src = GOOGLE_IDENTITY_SCRIPT;
+      script.async = true;
+      script.dataset.aspectGoogleIdentity = 'true';
+      script.addEventListener('load', onLoad);
+      script.addEventListener('error', onError);
+      document.head.appendChild(script);
+    } else {
+      script.addEventListener('load', onLoad);
+      script.addEventListener('error', onError);
+      if (googleOAuthApi()) onLoad();
+    }
+    return () => {
+      script?.removeEventListener('load', onLoad);
+      script?.removeEventListener('error', onError);
+    };
+  }, []);
+
+  useEffect(() => {
+    // A generated link belongs to the workspace that was exported.
+    setCreatedGoogleSheetUrl('');
+  }, [workspace]);
 
   // ==================================================
   // LOAD EXISTING SAVED DATA
@@ -3949,6 +4154,57 @@ export default function Home() {
     }
   }
 
+  // Create a native spreadsheet directly in the user's Google Drive.
+  // Authorization requires a Web OAuth client ID (never a client secret).
+  async function exportWorkspaceGoogleSheets(): Promise<void> {
+    if (!exportReady || googleExporting) {
+      if (!exportReady) {
+        setNotice('Complete the dimensions, costing and target gross net profit % for each unit before exporting.');
+      }
+      return;
+    }
+
+    const clientId = (process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID || '').trim();
+    if (!clientId) {
+      setNotice('Google Sheets export needs setup: configure NEXT_PUBLIC_GOOGLE_CLIENT_ID in .env.local and Vercel, then restart or redeploy.');
+      return;
+    }
+    const oauth = googleOAuthApi();
+    if (!oauth) {
+      setNotice('Google Sign-In is still loading or blocked. Allow accounts.google.com and try again.');
+      return;
+    }
+
+    setGoogleExporting(true);
+    setCreatedGoogleSheetUrl('');
+    setNotice('Authorize Google access to create a spreadsheet in your Drive.');
+
+    try {
+      // Important: starts the Google popup synchronously on the click path.
+      const accessTokenPromise = requestGoogleSheetsToken(oauth, clientId);
+      const accessToken = await accessTokenPromise;
+      const bytes = workspaceXlsx(project, totals, workspace);
+      const title = [
+        'Aspect Glasswork',
+        WORKSPACE_NAMES[workspace],
+        (project.projectName || 'Untitled Project').trim().slice(0, 75),
+        project.estimateNumber.trim() || 'Draft',
+      ].join(' - ');
+      const result = await uploadWorkbookAsGoogleSheet(accessToken, title, bytes);
+      setCreatedGoogleSheetUrl(result.url);
+      const draftWarning = totals.complete ? '' : ' This is a preliminary draft; review estimate warnings before quoting.';
+      setNotice(
+        `Google Sheet created in your Drive. Click "Open created Google Sheet" below.${draftWarning}` +
+        (result.warning ? ` ${result.warning}` : '')
+      );
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : 'Google Sheets export failed.';
+      setNotice(`Google Sheets export: ${reason}`);
+    } finally {
+      setGoogleExporting(false);
+    }
+  }
+
   // ==================================================
   // TOOLBAR
   // ==================================================
@@ -4026,7 +4282,7 @@ export default function Home() {
         <div className="topbar-right">
           <span className="top-pill">
             <span className="green-dot" />
-            Browser-based · V1.7.20
+            Browser-based · V1.7.21
           </span>
 
           <span className="autosave">
@@ -4131,7 +4387,7 @@ export default function Home() {
 
           <div className="sidebar-help">
             <strong>
-              Estimator V1.7.20
+              Estimator V1.7.21
             </strong>
 
             <p>
@@ -5863,6 +6119,41 @@ export default function Home() {
                     Export {WORKSPACE_NAMES[workspace]} Excel (.xlsx) ↗
                   </button>
 
+                  <button
+                    className="summary-secondary"
+                    onClick={() => void exportWorkspaceGoogleSheets()}
+                    disabled={!exportReady || googleExporting || !googleSdkReady}
+                    title="Creates an editable Google Sheet in your Drive after Google authorization"
+                  >
+                    {googleExporting
+                      ? 'Creating Google Sheet…'
+                      : !googleSdkReady
+                        ? 'Loading Google sign-in…'
+                        : `Export ${WORKSPACE_NAMES[workspace]} to Google Sheets ↗`}
+                  </button>
+
+                  {createdGoogleSheetUrl && (
+                    <a
+                      href={createdGoogleSheetUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      style={{
+                        display: 'block',
+                        textAlign: 'center',
+                        padding: '12px 16px',
+                        margin: '2px 16px 10px',
+                        borderRadius: 9,
+                        border: '1px solid #B9DAF7',
+                        color: '#FFFFFF',
+                        backgroundColor: '#1766A4',
+                        fontWeight: 700,
+                        textDecoration: 'none',
+                      }}
+                    >
+                      Open created Google Sheet ↗
+                    </a>
+                  )}
+
                   {exportReady && !totals.complete && (
                     <p style={{ color: '#D3E9FB', fontSize: 12, lineHeight: 1.5, margin: '8px 16px 0' }}>
                       Export available as a preliminary draft. Resolve the warnings under Review Estimate Inputs before quoting.
@@ -7156,7 +7447,7 @@ export default function Home() {
 
           <footer className="footer">
             <span>
-              Aspect Glasswork · V1.7.20
+              Aspect Glasswork · V1.7.21
             </span>
 
             <span>
