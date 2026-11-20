@@ -2239,7 +2239,7 @@ function workspaceXlsx(project: Project, totals: Totals, workspace: Workspace): 
   excelText(overview, 'C7', 'CC surcharge only; no separate commission is modeled.', 30);
   excelText(overview, 'A23', `${workspaceName.toUpperCase()} UNIT REGISTER`, 21);
   overview.merges.push('A23:C23');
-  excelText(overview, 'A24', workspace === 'windows' ? 'Window Mark / Type' : 'Unit Mark / Type', 31);
+  excelText(overview, 'A24', 'Unit Mark / Type', 31);
   excelText(overview, 'B24', 'Final Price with CC', 31);
   excelText(overview, 'C24', 'Worksheet', 31);
   totals.lines.forEach((line, i) => {
@@ -2274,7 +2274,7 @@ function workspaceXlsx(project: Project, totals: Totals, workspace: Workspace): 
     sheet.merges.push('A2:C2');
     excelText(sheet, 'A3', 'Estimate Number', 28);
     excelText(sheet, 'B3', project.estimateNumber.trim() || 'Unnumbered Draft', 29);
-    excelText(sheet, 'A4', workspace === 'windows' ? 'Window / Type' : 'Opening / Unit', 28);
+    excelText(sheet, 'A4', 'Opening / Unit', 28);
     const typeName = displayType(o, workspace);
     excelText(sheet, 'B4', `${o.mark} — ${typeName}`, 29);
     sheet.merges.push('B4:C4');
