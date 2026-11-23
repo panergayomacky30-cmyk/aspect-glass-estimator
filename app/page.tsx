@@ -21,7 +21,7 @@ import type {
   StorefrontOpening,
 } from '../lib/types';
 
-// ASPECT GLASSWORK ESTIMATING STUDIO V1.7.22
+// ASPECT GLASSWORK ESTIMATING STUDIO V1.7.23
 // Blue and white theme, 13 Storefront glass specs, 8 Windows glass specs,
 // 20 Windows-only window types; unnumbered framing and door dropdowns.
 // Storefront framing AND door models now have an Other choice with a custom
@@ -30,6 +30,10 @@ import type {
 // New estimates in all workspaces prompt for Frame Finish; saved finishes are kept.
 // All workspaces support custom frame finishes; calculations are unchanged.
 // Existing estimating formulas, saved projects and model dropdowns are retained.
+// V1.7.23: Calculated glass pricing in Storefront and Windows (including
+// storefront doors) deducts 2 inches on EACH side of EACH glass lite.
+// Manual glass pricing and all other workspaces retain V1.7.23 behavior.
+// Gross opening area and frame LF are not reduced by the glass cut allowance.
 // V1.7.22: Windows now uses Storefront county/hardware markup and glass
 // manufacturer surcharge + sales tax pricing, including live worksheets and Excel.
 // V1.7.21: Added Google Identity Services OAuth + Google Sheets/Drive API export.
@@ -62,6 +66,34 @@ function usesCountyPricing(workspace: Workspace): boolean {
 }
 type Tab = Workspace | 'pricing' | 'saved';
 type Mode = 'calculated' | 'manual';
+
+// Aspect Glasswork mentor's shop ESTIMATING allowance, not an approved
+// manufacturer fabrication or field-measurement rule.
+const SHOP_GLASS_CUT_EDGE_DEDUCTION_IN = 2;
+function usesShopGlassCut(workspace: Workspace, mode: Mode): boolean {
+  return usesCountyPricing(workspace) && mode === 'calculated';
+}
+
+// Columns/rows represent EQUAL glass lites in this simplified estimate.
+// For different sized doors, sidelites or transoms, enter each lite or
+// same-sized lite group as its own unit rather than averaging their sizes.
+function estimatedGlassCut(
+  width: number,
+  height: number,
+  columns: number,
+  rows: number,
+  quantity: number
+): { widthEach: number; heightEach: number; totalSF: number } | null {
+  const widthEach = width / columns - 2 * SHOP_GLASS_CUT_EDGE_DEDUCTION_IN;
+  const heightEach = height / rows - 2 * SHOP_GLASS_CUT_EDGE_DEDUCTION_IN;
+  if (widthEach <= 0 || heightEach <= 0) return null;
+  return {
+    widthEach,
+    heightEach,
+    totalSF: widthEach * heightEach * columns * rows * quantity / 144,
+  };
+}
+
 type GlassStyle = 'Annealed' | 'Tempered';
 type PricingView = 'glass' | 'framing' | 'settings';
 type RateFilter = 'all' | 'priced' | 'unpriced';
@@ -731,7 +763,11 @@ type Line = {
   opening: Opening;
   width: number;
   height: number;
-  glassSF: number;
+  glassSF: number; // gross opening area, never reduced
+  glassPricingSF: number; // area used for calculated glass price
+  glassCutWidthEach: number | null; // only in calculated Storefront/Windows
+  glassCutHeightEach: number | null;
+  glassCutSF: number | null;
   frameLF: number;
   glassRate: number;
   frameRate: number;
@@ -1412,9 +1448,24 @@ function calculate(
 
     const qty = o.quantity;
 
-    // Glass area — no material allowance
-    const glassSF =
-      w * h / 144 * qty;
+    // Gross opening area always includes the full overall frame footprint.
+    // Glass pricing applies the shop deduction only in CALCULATED mode for
+    // Storefront and Windows, regardless of selected frame or door model.
+    const glassSF = w * h / 144 * qty;
+    const applyShopGlassCut = usesShopGlassCut(workspace, o.glassMode);
+    const glassCut = applyShopGlassCut
+      ? estimatedGlassCut(w, h, o.columns, o.rows, qty)
+      : null;
+    if (applyShopGlassCut && glassCut === null) {
+      errors.push(
+        `${label}: each glass lite must be over 4 inches wide and high ` +
+        `(overall width / columns and height / rows) for the 2-inch-per-side cut deduction.`
+      );
+      continue;
+    }
+    const glassPricingSF = applyShopGlassCut
+      ? (glassCut?.totalSF ?? 0)
+      : glassSF;
 
     // Simplified framing length
     const frameLF =
@@ -1434,7 +1485,7 @@ function calculate(
     const glassCost =
       o.glassMode === 'manual'
         ? o.manualGlassCostEach * qty
-        : glassSF * (glassRate ?? 0);
+        : glassPricingSF * (glassRate ?? 0);
 
     const hardwareCost =
       o.hardwareMode === 'manual'
@@ -1521,6 +1572,10 @@ function calculate(
       width: w,
       height: h,
       glassSF,
+      glassPricingSF,
+      glassCutWidthEach: glassCut?.widthEach ?? null,
+      glassCutHeightEach: glassCut?.heightEach ?? null,
+      glassCutSF: glassCut?.totalSF ?? null,
       frameLF,
       glassRate: glassRate ?? 0,
       frameRate,
@@ -2046,7 +2101,7 @@ function storefrontXlsx(project: Project, totals: Totals, workspace: 'storefront
   const noteRow = 27 + totals.lines.length;
   excelText(overview, `A${noteRow}`, 'Simple formulas and visible rates are in each Unit worksheet.', 30);
   overview.merges.push(`A${noteRow}:C${noteRow}`);
-  excelText(overview, `A${noteRow + 1}`, 'Cost formulas follow the live app; no material waste allowance.', 30);
+  excelText(overview, `A${noteRow + 1}`, 'Calculated glass uses 2-inch per side per lite; manual glass costs unchanged. No waste allowance.', 30);
   overview.merges.push(`A${noteRow + 1}:C${noteRow + 1}`);
 
   // Keep calculated drafts downloadable, but clearly distinguish them from
@@ -2111,7 +2166,7 @@ function storefrontXlsx(project: Project, totals: Totals, workspace: 'storefront
     r(10, 'Total Hardware Cost', 'B9*(1+B24)', l.totalHardwareCost, 'subtotal');
 
     baseAmount(12, `Cost of Glass${o.glassMode === 'manual' ? ' [manual]' : ' [calculated]'}`,
-      l.glassCost, 'plain', o.glassMode === 'calculated' ? 'B35*B42' : undefined);
+      l.glassCost, 'plain', o.glassMode === 'calculated' ? 'B51*B42' : undefined);
     r(13, 'Total Glass Cost', 'B12*(1+B25)*(1+B26)', l.totalGlassCost, 'subtotal');
 
     baseAmount(15, 'OPEX [manual]', l.opex, 'opex');
@@ -2155,7 +2210,7 @@ function storefrontXlsx(project: Project, totals: Totals, workspace: 'storefront
     infoNumber(32, 'Quantity', o.quantity, 'Number of assemblies; main costs include the quantity', 32);
     infoNumber(33, 'Width (in)', l.width, 'Dimensions at export');
     infoNumber(34, 'Height (in)', l.height, 'Dimensions at export');
-    infoNumber(35, 'Glass Area (SF)', l.glassSF, 'App-calculated snapshot for all assemblies', 33);
+    infoNumber(35, 'Gross Opening Area (SF)', l.glassSF, 'Original overall width × height × quantity ÷ 144; framing included', 33);
     infoNumber(36, 'Frame Length (LF)', l.frameLF, 'App-calculated snapshot for all assemblies', 33);
     infoText(37, 'Glass Costing Mode', o.glassMode, 'Calculated SF rate or manual per-assembly cost');
     infoText(38, 'Hardware Costing Mode', o.hardwareMode, 'Calculated LF rate or manual per-assembly cost');
@@ -2169,17 +2224,39 @@ function storefrontXlsx(project: Project, totals: Totals, workspace: 'storefront
     infoNumber(46, 'Door Package / Assembly', l.doorRate, 'App pricing input; included in calculated hardware', 25);
     infoNumber(47, 'Hardware Allowance / Assembly', o.hardwareAllowance, 'App pricing input; included in calculated hardware', 25);
 
-    excelText(sheet, 'A50', 'Manual B9/B12 and OPEX B15 are direct amounts. Calculated modes use simple formulas.', 30);
-    sheet.merges.push('A50:C50');
-    excelText(sheet, 'A51', 'Width, height, glass SF and frame LF are snapshots; re-export if geometry or quantity changes.', 30);
-    sheet.merges.push('A51:C51');
-    excelText(sheet, 'A52', `${workspaceName}: hardware × (1 + county markup); glass × (1 + manufacturer surcharge) × (1 + sales tax).`, 30);
-    sheet.merges.push('A52:C52');
-    excelText(sheet, 'A53', 'The app is the source of truth; no material waste allowance is included.', 30);
-    sheet.merges.push('A53:C53');
+    // These live spreadsheet formulas correspond to the V1.7.23 app formula.
+    // Manual pricing deliberately contains no glass-cut values or deductions.
+    if (o.glassMode === 'calculated') {
+      infoNumber(48, 'Shop Glass Deduction Per Side (in)', SHOP_GLASS_CUT_EDGE_DEDUCTION_IN, 'Estimator only; deduct at left/right/top/bottom', 25);
+      excelText(sheet, 'A49', 'Est. Cut Width / Lite (in)', 23);
+      excelFormula(sheet, 'B49', 'B33/B44-2*B48', l.glassCutWidthEach ?? 0, 24);
+      excelText(sheet, 'C49', 'Overall unit width / columns − 4 inches', 30);
+      excelText(sheet, 'A50', 'Est. Cut Height / Lite (in)', 23);
+      excelFormula(sheet, 'B50', 'B34/B45-2*B48', l.glassCutHeightEach ?? 0, 24);
+      excelText(sheet, 'C50', 'Overall unit height / rows − 4 inches', 30);
+      excelText(sheet, 'A51', 'Estimated Glass Cut Area (SF)', 23);
+      excelFormula(sheet, 'B51', 'B49*B50*B44*B45*B32/144', l.glassCutSF ?? 0, 33);
+      excelText(sheet, 'C51', 'Cut size per lite × count × quantity, in square feet', 30);
+    } else {
+      infoText(48, 'Shop Glass Deduction Per Side (in)', 'Not applied', 'Manual glass cost already includes supplier-provided pricing');
+      infoText(49, 'Est. Cut Width / Lite (in)', 'Not applied', 'Manual price is used as entered');
+      infoText(50, 'Est. Cut Height / Lite (in)', 'Not applied', 'Manual price is used as entered');
+      infoText(51, 'Estimated Glass Cut Area (SF)', 'Not applied', 'Manual price is used as entered');
+    }
+    infoNumber(52, 'Gross Opening Area (SF)', l.glassSF, 'Overall gross area, unchanged by shop deduction', 33);
+    infoNumber(53, 'Total Glass Lites', o.columns * o.rows * o.quantity, 'Assumes equal-sized lites for each unit', 32);
+
+    excelText(sheet, 'A56', 'Manual B9/B12 and OPEX B15 are direct amounts; no glass deduction in manual mode.', 30);
+    sheet.merges.push('A56:C56');
+    excelText(sheet, 'A57', 'Calculated glass: 2 inches off EACH side of EACH equal-sized lite. For mixed-size glass, enter separate units.', 30);
+    sheet.merges.push('A57:C57');
+    excelText(sheet, 'A58', `${workspaceName}: hardware × (1 + county markup); glass × (1 + manufacturer surcharge) × (1 + sales tax).`, 30);
+    sheet.merges.push('A58:C58');
+    excelText(sheet, 'A59', 'Estimated cuts are NOT verified fabrication sizes; no material waste allowance is included.', 30);
+    sheet.merges.push('A59:C59');
     if (!totals.complete) {
-      excelText(sheet, 'A55', 'PRELIMINARY DRAFT — REVIEW PROJECT VALIDATION BEFORE QUOTING', 21);
-      sheet.merges.push('A55:C55');
+      excelText(sheet, 'A61', 'PRELIMINARY DRAFT — REVIEW PROJECT VALIDATION BEFORE QUOTING', 21);
+      sheet.merges.push('A61:C61');
     }
   });
 
@@ -2880,7 +2957,7 @@ function Worksheet({
             ? `${currency(
                 o.manualGlassCostEach
               )} per assembly × ${o.quantity}`
-            : `${n4(l.glassSF)} SF × ` +
+            : `${n4(l.glassPricingSF)} SF × ` +
               `${currency(l.glassRate)}/SF`
         }
         result={currency(l.glassCost)}
@@ -3000,6 +3077,19 @@ function OpeningFormula({
         result={`${n4(l.glassSF)} SF`}
       />
 
+      {usesShopGlassCut(workspace, o.glassMode) && l.glassCutSF !== null && (
+        <Detail
+          title="Estimated glass cut size / pricing area"
+          formula={
+            `(${n4(l.width)} ÷ ${o.columns} − 2" left − 2" right) × ` +
+            `(${n4(l.height)} ÷ ${o.rows} − 2" top − 2" bottom); ` +
+            `${o.columns} × ${o.rows} lites × ${o.quantity} assemblies; ` +
+            `each ${n4(l.glassCutWidthEach ?? 0)}" × ${n4(l.glassCutHeightEach ?? 0)}"`
+          }
+          result={`${n4(l.glassCutSF)} SF`}
+        />
+      )}
+
       <Detail
         title="Framing length"
         formula={
@@ -3024,6 +3114,9 @@ function OpeningFormula({
         {usesCountyPricing(workspace)
           ? ' Hardware is marked up by the selected county rate; glass is adjusted and taxed.'
           : ' The fixed hardware fee is charged once per unit mark.'}
+        {usesShopGlassCut(workspace, o.glassMode)
+          ? ' Calculated glass uses the Aspect Glasswork estimating allowance of 2 inches per side of each equal-sized lite; manual glass costs are not adjusted. Mixed-size doors, sidelites and transoms should be entered as separate units. This is not a fabrication cut list.'
+          : ''}
         No material waste allowance is added.
       </p>
     </details>
@@ -4116,6 +4209,11 @@ export default function Home() {
       'Gross Net Profit %',
       'Price',
       'Final Price with CC',
+      'Glass Pricing SF',
+      'Estimated Cut Width Each in (calculated Storefront/Windows only)',
+      'Estimated Cut Height Each in (calculated Storefront/Windows only)',
+      'Estimated Glass Cut SF (calculated Storefront/Windows only)',
+      'Glass Cut Deduction Per Side in (calculated Storefront/Windows only)',
     ];
 
     const rows = totals.lines.map(l => [
@@ -4148,6 +4246,11 @@ export default function Home() {
       l.opening.targetGrossNetPct ?? '',
       l.price?.toFixed(2) ?? '',
       l.finalPrice?.toFixed(2) ?? '',
+      l.opening.glassMode === 'calculated' ? l.glassPricingSF.toFixed(4) : '',
+      l.glassCutWidthEach === null ? '' : l.glassCutWidthEach.toFixed(4),
+      l.glassCutHeightEach === null ? '' : l.glassCutHeightEach.toFixed(4),
+      l.glassCutSF === null ? '' : l.glassCutSF.toFixed(4),
+      l.glassCutSF === null ? '' : SHOP_GLASS_CUT_EDGE_DEDUCTION_IN,
     ]);
 
     download(
@@ -4321,7 +4424,7 @@ export default function Home() {
         <div className="topbar-right">
           <span className="top-pill">
             <span className="green-dot" />
-            Browser-based · V1.7.22
+            Browser-based · V1.7.23
           </span>
 
           <span className="autosave">
@@ -4426,7 +4529,7 @@ export default function Home() {
 
           <div className="sidebar-help">
             <strong>
-              Estimator V1.7.22
+              Estimator V1.7.23
             </strong>
 
             <p>
@@ -5537,6 +5640,16 @@ export default function Home() {
                             </select>
                           </Field>
 
+                          {usesShopGlassCut(workspace, o.glassMode) && (
+                            <div style={{ gridColumn: '1 / -1', padding: '8px 11px', borderRadius: 8, background: '#F0F7FD', color: '#2D5879', fontSize: 11, lineHeight: 1.6 }}>
+                              <strong>Calculated glass cut allowance:</strong>{' '}
+                              deduct 2" from each side of every glass lite (4" from lite width and 4" from lite height).
+                              {' '}Applies to windows, storefront glazing, sidelites, transoms, and glazed doors, regardless of selected framing or door model.
+                              {' '}For different-sized glass pieces in one assembly, add each size as a separate unit.
+                              {' '}Manual glass pricing is not changed. Estimating only; verify actual fabrication sizes.
+                            </div>
+                          )}
+
                           {o.glassMode === 'manual' ? (
                             <Field label="Manual glass cost $ / assembly">
                               <Num
@@ -5714,13 +5827,15 @@ export default function Home() {
                         <div className="opening-result">
                           <div>
                             <span>
-                              Glass area
+                              {usesShopGlassCut(workspace, o.glassMode)
+                                ? 'Glass cut area (pricing)'
+                                : 'Gross glass area'}
                             </span>
 
                             <strong>
                               {line
                                 ? `${n4(
-                                    line.glassSF
+                                    line.glassPricingSF
                                   )} SF`
                                 : '—'}
                             </strong>
@@ -5971,12 +6086,14 @@ export default function Home() {
 
                     <div>
                       <span>
-                        Glass SF
+                        {selected && usesShopGlassCut(workspace, selected.opening.glassMode)
+                          ? 'Glass cut SF (pricing)'
+                          : 'Gross SF'}
                       </span>
 
                       <strong>
                         {selected
-                          ? n4(selected.glassSF)
+                          ? n4(selected.glassPricingSF)
                           : '—'}
                       </strong>
                     </div>
@@ -7486,7 +7603,7 @@ export default function Home() {
 
           <footer className="footer">
             <span>
-              Aspect Glasswork · V1.7.22
+              Aspect Glasswork · V1.7.23
             </span>
 
             <span>
