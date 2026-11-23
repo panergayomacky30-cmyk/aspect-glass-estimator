@@ -21,7 +21,7 @@ import type {
   StorefrontOpening,
 } from '../lib/types';
 
-// ASPECT GLASSWORK ESTIMATING STUDIO V1.7.23
+// ASPECT GLASSWORK ESTIMATING STUDIO V1.7.24
 // Blue and white theme, 13 Storefront glass specs, 8 Windows glass specs,
 // 20 Windows-only window types; unnumbered framing and door dropdowns.
 // Storefront framing AND door models now have an Other choice with a custom
@@ -30,9 +30,12 @@ import type {
 // New estimates in all workspaces prompt for Frame Finish; saved finishes are kept.
 // All workspaces support custom frame finishes; calculations are unchanged.
 // Existing estimating formulas, saved projects and model dropdowns are retained.
+// V1.7.24: Shortened calculated glass cut notice; glass pricing method and
+// Glass Rate $/SF now display side by side (also manual cost when selected).
+// No pricing formulas changed.
 // V1.7.23: Calculated glass pricing in Storefront and Windows (including
 // storefront doors) deducts 2 inches on EACH side of EACH glass lite.
-// Manual glass pricing and all other workspaces retain V1.7.23 behavior.
+// Manual glass pricing and all other workspaces retain V1.7.22 behavior.
 // Gross opening area and frame LF are not reduced by the glass cut allowance.
 // V1.7.22: Windows now uses Storefront county/hardware markup and glass
 // manufacturer surcharge + sales tax pricing, including live worksheets and Excel.
@@ -4424,7 +4427,7 @@ export default function Home() {
         <div className="topbar-right">
           <span className="top-pill">
             <span className="green-dot" />
-            Browser-based · V1.7.23
+            Browser-based · V1.7.24
           </span>
 
           <span className="autosave">
@@ -4529,7 +4532,7 @@ export default function Home() {
 
           <div className="sidebar-help">
             <strong>
-              Estimator V1.7.23
+              Estimator V1.7.24
             </strong>
 
             <p>
@@ -5617,76 +5620,85 @@ export default function Home() {
                             />
                           </Field>
 
-                          {/* GLASS PRICING */}
+                          {/* GLASS PRICING — keep method and rate together */}
 
-                          <Field label="Glass pricing method">
-                            <select
-                              className="input"
-                              value={o.glassMode}
-                              onChange={e =>
-                                setOpening(o.id, {
-                                  glassMode:
-                                    e.target.value as Mode,
-                                })
-                              }
-                            >
-                              <option value="calculated">
-                                Calculated — SF × rate
-                              </option>
+                          <div
+                            style={{
+                              gridColumn: '1 / -1',
+                              display: 'grid',
+                              gridTemplateColumns: 'repeat(2, minmax(0, 1fr))',
+                              gap: 17,
+                              alignItems: 'start',
+                            }}
+                          >
+                            <Field label="Glass pricing method">
+                              <select
+                                className="input"
+                                value={o.glassMode}
+                                onChange={e =>
+                                  setOpening(o.id, {
+                                    glassMode:
+                                      e.target.value as Mode,
+                                  })
+                                }
+                              >
+                                <option value="calculated">
+                                  Calculated — SF × rate
+                                </option>
 
-                              <option value="manual">
-                                Manual — cost per assembly
-                              </option>
-                            </select>
-                          </Field>
+                                <option value="manual">
+                                  Manual — cost per assembly
+                                </option>
+                              </select>
+                            </Field>
 
-                          {usesShopGlassCut(workspace, o.glassMode) && (
-                            <div style={{ gridColumn: '1 / -1', padding: '8px 11px', borderRadius: 8, background: '#F0F7FD', color: '#2D5879', fontSize: 11, lineHeight: 1.6 }}>
-                              <strong>Calculated glass cut allowance:</strong>{' '}
-                              deduct 2" from each side of every glass lite (4" from lite width and 4" from lite height).
-                              {' '}Applies to windows, storefront glazing, sidelites, transoms, and glazed doors, regardless of selected framing or door model.
-                              {' '}For different-sized glass pieces in one assembly, add each size as a separate unit.
-                              {' '}Manual glass pricing is not changed. Estimating only; verify actual fabrication sizes.
-                            </div>
-                          )}
-
-                          {o.glassMode === 'manual' ? (
-                            <Field label="Manual glass cost $ / assembly">
-                              <Num
-                                value={
-                                  o.manualGlassCostEach
+                            {o.glassMode === 'manual' ? (
+                              <Field label="Manual glass cost $ / assembly">
+                                <Num
+                                  value={
+                                    o.manualGlassCostEach
+                                  }
+                                  onChange={v =>
+                                    setOpening(o.id, {
+                                      manualGlassCostEach:
+                                        v,
+                                    })
+                                  }
+                                />
+                              </Field>
+                            ) : (
+                              <RateInput
+                                label="Glass Rate $/SF"
+                                unit="SF"
+                                selected={
+                                  `${o.glassSpecification} · ` +
+                                  o.glassStyle
+                                }
+                                defaultRate={catalogRate(
+                                  o.glassSpecification,
+                                  o.glassStyle,
+                                  p
+                                )}
+                                override={
+                                  o.glassRateOverride
                                 }
                                 onChange={v =>
                                   setOpening(o.id, {
-                                    manualGlassCostEach:
+                                    glassRateOverride:
                                       v,
                                   })
                                 }
                               />
-                            </Field>
-                          ) : (
-                            <RateInput
-                              label="Glass Rate $/SF"
-                              unit="SF"
-                              selected={
-                                `${o.glassSpecification} · ` +
-                                o.glassStyle
-                              }
-                              defaultRate={catalogRate(
-                                o.glassSpecification,
-                                o.glassStyle,
-                                p
-                              )}
-                              override={
-                                o.glassRateOverride
-                              }
-                              onChange={v =>
-                                setOpening(o.id, {
-                                  glassRateOverride:
-                                    v,
-                                })
-                              }
-                            />
+                            )}
+
+                          </div>
+
+                          {usesShopGlassCut(workspace, o.glassMode) && (
+                            <div style={{ gridColumn: '1 / -1', padding: '8px 11px', borderRadius: 8, background: '#F0F7FD', color: '#2D5879', fontSize: 11, lineHeight: 1.5 }}>
+                              <strong>Calculated glass cut:</strong>{' '}
+                              deduct 2&quot; per side of each lite (4&quot; from width and height).
+                              {' '}For storefront, window, and door glass. Verify fabrication sizes.
+                            </div>
                           )}
 
                           {/* HARDWARE PRICING */}
@@ -7603,7 +7615,7 @@ export default function Home() {
 
           <footer className="footer">
             <span>
-              Aspect Glasswork · V1.7.23
+              Aspect Glasswork · V1.7.24
             </span>
 
             <span>
