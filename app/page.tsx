@@ -21,7 +21,7 @@ import type {
   StorefrontOpening,
 } from '../lib/types';
 
-// ASPECT GLASSWORK ESTIMATING STUDIO V1.7.24
+// ASPECT GLASSWORK ESTIMATING STUDIO V1.7.26
 // Blue and white theme, 13 Storefront glass specs, 8 Windows glass specs,
 // 20 Windows-only window types; unnumbered framing and door dropdowns.
 // Storefront framing AND door models now have an Other choice with a custom
@@ -30,6 +30,14 @@ import type {
 // New estimates in all workspaces prompt for Frame Finish; saved finishes are kept.
 // All workspaces support custom frame finishes; calculations are unchanged.
 // Existing estimating formulas, saved projects and model dropdowns are retained.
+// V1.7.26: Workspace-specific manufacturer/system framing-rate catalogs,
+// and Storefront door-model single/double package catalogs. Selected model
+// now supplies calculated hardware rates, with per-opening overrides intact.
+// Legacy generic rates still apply when a model rate is not customized.
+// Manual hardware, glass prices, saved project backups and exports remain.
+// V1.7.25: All workspaces now display hardware method, framing LF rate,
+// and additional hardware cost on one row for calculated pricing; renamed
+// Accessories to Hardware in visible text. No formulas changed.
 // V1.7.24: Shortened calculated glass cut notice; glass pricing method and
 // Glass Rate $/SF now display side by side (also manual cost when selected).
 // No pricing formulas changed.
@@ -711,6 +719,10 @@ function displayType(o: Opening, workspace: Workspace): string {
 
 type Rules = PricingRules & {
   glassSpecRates: Record<string, number | null>;
+  // Per-workspace model rates; blank/null means use this workspace's default.
+  framingSystemRates: Record<string, number | null>;
+  storefrontDoorRatesSingle: Record<string, number | null>;
+  storefrontDoorRatesDouble: Record<string, number | null>;
   hardwareFixedFee: number;
   hardwareTaxPct: number;
   glassDiscountPct: number;
@@ -881,6 +893,62 @@ function modelDescription(
 }
 
 // =====================================================
+// PER-MODEL FRAMING / DOOR PACKAGE RATE LOOKUP
+// =====================================================
+
+function cleanModelRateMap(value: unknown): Record<string, number | null> {
+  return Object.fromEntries(
+    Object.entries(obj(value)).filter(([name, rate]) =>
+      name.trim() !== '' &&
+      (rate === null ||
+        (typeof rate === 'number' && Number.isFinite(rate) && rate >= 0))
+    )
+  ) as Record<string, number | null>;
+}
+
+// The four workspaces already use separate pricing objects. This catalog
+// follows the exact framing dropdown in each workspace. Custom selections
+// can also receive their own rate once named (not the "Other" placeholder).
+function rateFramingModels(workspace: Workspace, selected: string): string[] {
+  const choices = workspace === 'storefront'
+    ? STOREFRONT_FRAMES.map(item => item.name)
+    : [...framingOptionsFor(workspace)];
+  const custom = selected.trim();
+  if (custom && custom !== 'Other' &&
+      !choices.includes(custom) &&
+      !(workspace === 'windows' && custom === 'Aluminum window framing')) {
+    choices.push(custom);
+  }
+  return choices;
+}
+
+function catalogFramingRate(p: Rules, system: string): number {
+  const assigned = p.framingSystemRates[system];
+  return typeof assigned === 'number' && Number.isFinite(assigned) && assigned >= 0
+    ? assigned
+    : p.framingRatePerLF;
+}
+
+function catalogDoorPackageRate(
+  p: Rules,
+  workspace: Workspace,
+  model: string,
+  openingType: Opening['openingType']
+): number {
+  if (openingType !== 'single-door' && openingType !== 'double-door') return 0;
+  const generic = openingType === 'single-door'
+    ? p.singleDoorPackage
+    : p.doubleDoorPackage;
+  if (workspace !== 'storefront' || !model || model === 'Other') return generic;
+  const assigned = openingType === 'single-door'
+    ? p.storefrontDoorRatesSingle[model]
+    : p.storefrontDoorRatesDouble[model];
+  return typeof assigned === 'number' && Number.isFinite(assigned) && assigned >= 0
+    ? assigned
+    : generic;
+}
+
+// =====================================================
 // GLASS RATE LOOKUP
 // =====================================================
 
@@ -1039,6 +1107,9 @@ function normalizeAppProject(
             )
         )
       ) as Record<string, number | null>,
+      framingSystemRates: cleanModelRateMap(rp.framingSystemRates),
+      storefrontDoorRatesSingle: cleanModelRateMap(rp.storefrontDoorRatesSingle),
+      storefrontDoorRatesDouble: cleanModelRateMap(rp.storefrontDoorRatesDouble),
 
       hardwareFixedFee: nonneg(
         rp.hardwareFixedFee,
@@ -1324,6 +1395,19 @@ function calculate(
     }
   }
 
+  // Model-specific price lists must never generate negative material costs.
+  for (const [directory, values] of [
+    ['Framing systems', p.framingSystemRates],
+    ['Single-door models', p.storefrontDoorRatesSingle],
+    ['Double-door models', p.storefrontDoorRatesDouble],
+  ] as const) {
+    for (const [model, rate] of Object.entries(values)) {
+      if (rate !== null && (!Number.isFinite(rate) || rate < 0)) {
+        errors.push(`${directory}: ${model} must have a non-negative rate.`);
+      }
+    }
+  }
+
   for (const o of project.openings) {
     const label =
       o.mark.trim() || 'Unnamed opening';
@@ -1413,7 +1497,7 @@ function calculate(
 
     const frameRate =
       o.frameRateOverride ??
-      p.framingRatePerLF;
+      catalogFramingRate(p, project.framingSystem);
 
     if (
       o.glassMode === 'calculated' &&
@@ -1478,12 +1562,9 @@ function calculate(
         (o.rows - 1) * w
       ) / 12 * qty;
 
-    const doorRate =
-      o.openingType === 'single-door'
-        ? p.singleDoorPackage
-        : o.openingType === 'double-door'
-          ? p.doubleDoorPackage
-          : 0;
+    const doorRate = catalogDoorPackageRate(
+      p, workspace, project.storefrontDoorModel, o.openingType
+    );
 
     const glassCost =
       o.glassMode === 'manual'
@@ -2936,7 +3017,7 @@ function Worksheet({
               `${currency(l.frameRate)}/LF + ` +
               `${o.quantity} × (` +
               `${currency(l.doorRate)} door + ` +
-              `${currency(o.hardwareAllowance)} extras)`
+              `${currency(o.hardwareAllowance)} additional hardware)`
         }
         result={currency(l.hardwareCost)}
       />
@@ -3572,6 +3653,34 @@ export default function Home() {
       pricing: {
         ...old.pricing,
         [key]: value,
+      },
+    }));
+  }
+
+  // Edit a model in this workspace only. Null means use the generic default.
+  function setFramingModelRate(name: string, rate: number | null) {
+    setProject(old => ({
+      ...old,
+      pricing: {
+        ...old.pricing,
+        framingSystemRates: { ...old.pricing.framingSystemRates, [name]: rate },
+      },
+    }));
+  }
+
+  function setDoorModelRate(
+    model: string,
+    type: 'single' | 'double',
+    rate: number | null
+  ) {
+    const key = type === 'single'
+      ? 'storefrontDoorRatesSingle'
+      : 'storefrontDoorRatesDouble';
+    setProject(old => ({
+      ...old,
+      pricing: {
+        ...old.pricing,
+        [key]: { ...old.pricing[key], [model]: rate },
       },
     }));
   }
@@ -4427,7 +4536,7 @@ export default function Home() {
         <div className="topbar-right">
           <span className="top-pill">
             <span className="green-dot" />
-            Browser-based · V1.7.24
+            Browser-based · V1.7.26
           </span>
 
           <span className="autosave">
@@ -4532,7 +4641,7 @@ export default function Home() {
 
           <div className="sidebar-help">
             <strong>
-              Estimator V1.7.24
+              Estimator V1.7.26
             </strong>
 
             <p>
@@ -5183,15 +5292,13 @@ export default function Home() {
                         Storefront specifications:
                       </strong>
                       {' '}
-                      The selected framing and door
-                      models are saved with this project
-                      and included in CSV exports.
-                      Their selection does not
-                      automatically change material
-                      rates or confirm compatibility.
-                      Different door models within
-                      one project may be specified
-                      in individual opening notes.
+                      The selected framing system and door model are saved with
+                      this project and included in CSV exports. In calculated
+                      hardware mode, the matching catalog rates are used
+                      automatically; this does not confirm system compatibility.
+                      A single door model is selected per Storefront project.
+                      If door models differ between units, use separate project
+                      estimates or adjust individual hardware costs manually.
                     </p>
                   )}
                 </section>
@@ -5701,81 +5808,78 @@ export default function Home() {
                             </div>
                           )}
 
-                          {/* HARDWARE PRICING */}
+                          {/* HARDWARE PRICING — one row with 3 inputs when calculated. */}
 
-                          <Field label="Hardware pricing method">
-                            <select
-                              className="input"
-                              value={o.hardwareMode}
-                              onChange={e =>
-                                setOpening(o.id, {
-                                  hardwareMode:
-                                    e.target.value as Mode,
-                                })
-                              }
-                            >
-                              <option value="calculated">
-                                Calculated — frame LF + accessories
-                              </option>
-
-                              <option value="manual">
-                                Manual — cost per assembly
-                              </option>
-                            </select>
-                          </Field>
-
-                          {o.hardwareMode === 'manual' ? (
-                            <Field label="Manual hardware cost $ / assembly">
-                              <Num
-                                value={
-                                  o.manualHardwareCostEach
-                                }
-                                onChange={v =>
+                          <div
+                            className={`hardware-pricing-row ${
+                              o.hardwareMode === 'calculated'
+                                ? 'hardware-pricing-row--calculated'
+                                : 'hardware-pricing-row--manual'
+                            }`}
+                          >
+                            <Field label="Hardware pricing method">
+                              <select
+                                className="input"
+                                value={o.hardwareMode}
+                                onChange={e =>
                                   setOpening(o.id, {
-                                    manualHardwareCostEach:
-                                      v,
+                                    hardwareMode:
+                                      e.target.value as Mode,
                                   })
                                 }
-                              />
+                              >
+                                <option value="calculated">
+                                  Calculated — frame LF + hardware
+                                </option>
+
+                                <option value="manual">
+                                  Manual — cost per assembly
+                                </option>
+                              </select>
                             </Field>
-                          ) : (
-                            <>
-                              <RateInput
-                                label="Framing Rate $/LF"
-                                unit="LF"
-                                selected={
-                                  project.framingSystem ||
-                                  'Framing system not selected'
-                                }
-                                defaultRate={
-                                  p.framingRatePerLF
-                                }
-                                override={
-                                  o.frameRateOverride
-                                }
-                                onChange={v =>
-                                  setOpening(o.id, {
-                                    frameRateOverride:
-                                      v,
-                                  })
-                                }
-                              />
 
-                              <Field label="Additional hardware $ / assembly">
+                            {o.hardwareMode === 'manual' ? (
+                              <Field label="Manual hardware cost $ / assembly">
                                 <Num
-                                  value={
-                                    o.hardwareAllowance
-                                  }
+                                  value={o.manualHardwareCostEach}
                                   onChange={v =>
                                     setOpening(o.id, {
-                                      hardwareAllowance:
-                                        v,
+                                      manualHardwareCostEach: v,
                                     })
                                   }
                                 />
                               </Field>
-                            </>
-                          )}
+                            ) : (
+                              <>
+                                <RateInput
+                                  label="Framing Rate $/LF"
+                                  unit="LF"
+                                  selected={
+                                    project.framingSystem ||
+                                    'Framing system not selected'
+                                  }
+                                  defaultRate={catalogFramingRate(p, project.framingSystem)}
+                                  override={o.frameRateOverride}
+                                  onChange={v =>
+                                    setOpening(o.id, {
+                                      frameRateOverride: v,
+                                    })
+                                  }
+                                />
+
+                                <Field label="Additional hardware $ / assembly">
+                                  <Num
+                                    value={o.hardwareAllowance}
+                                    onChange={v =>
+                                      setOpening(o.id, {
+                                        hardwareAllowance: v,
+                                      })
+                                    }
+                                  />
+                                </Field>
+                              </>
+                            )}
+                          </div>
 
                           {/* OPEX */}
 
@@ -6509,8 +6613,9 @@ export default function Home() {
                     draft, and new estimates in this workspace inherit its
                     current rates. Other workspace directories and previously
                     saved project snapshots remain unchanged.
-                    Selecting a framing or door model does not automatically
-                    change these rates.
+                    Selecting a listed framing system or Storefront door model
+                    automatically uses its model rate in calculated hardware
+                    pricing. Unit-specific overrides and manual costs take priority.
                   </p>
 
                   <div
@@ -6986,90 +7091,140 @@ export default function Home() {
                   <section className="panel">
                     <div className="panel-heading">
                       <div>
-                        <span className="section-label">
-                          02 / FRAMING &amp; DOOR PACKAGES
-                        </span>
-
-                        <h2>
-                          Framing and Hardware Rates
-                        </h2>
+                        <span className="section-label">02 / FRAMING &amp; DOOR PACKAGES</span>
+                        <h2>Framing and Hardware Rates</h2>
                       </div>
                     </div>
-
                     <p className="panel-subtitle">
-                      These rates apply to the
-                      current {WORKSPACE_NAMES[workspace]}
-                      {' '}draft independently of the
-                      Glass Rates catalog.
-                      Selecting a Storefront framing
-                      or door model does not
-                      automatically change these costs.
+                      Set different prices for each framing system in the {WORKSPACE_NAMES[workspace]}
+                      {' '}directory. Storefront also has model-specific single- and double-door
+                      packages. Your existing default rates are used until you set a model rate.
                     </p>
 
+                    <h3 className="rate-catalog-heading">General defaults — {WORKSPACE_NAMES[workspace]}</h3>
                     <div className="form-grid">
-                      <Field label="Default aluminum framing $/LF">
-                        <Num
-                          value={
-                            p.framingRatePerLF
-                          }
-                          onChange={v =>
-                            setRule(
-                              'framingRatePerLF',
-                              v
-                            )
-                          }
-                        />
+                      <Field label="Fallback framing rate $/LF" hint="Used if no specific framing system rate has been set.">
+                        <Num value={p.framingRatePerLF} onChange={v => setRule('framingRatePerLF', v)} />
                       </Field>
-
-                      <Field label="Single-door package $ / assembly">
-                        <Num
-                          value={
-                            p.singleDoorPackage
-                          }
-                          onChange={v =>
-                            setRule(
-                              'singleDoorPackage',
-                              v
-                            )
-                          }
-                        />
+                      <Field label="Fallback single-door package $ / assembly" hint="Used for unpriced models and door assemblies without a specific model.">
+                        <Num value={p.singleDoorPackage} onChange={v => setRule('singleDoorPackage', v)} />
                       </Field>
-
-                      <Field label="Double-door package $ / assembly">
-                        <Num
-                          value={
-                            p.doubleDoorPackage
-                          }
-                          onChange={v =>
-                            setRule(
-                              'doubleDoorPackage',
-                              v
-                            )
-                          }
-                        />
+                      <Field label="Fallback double-door package $ / assembly" hint="Used for unpriced models and door assemblies without a specific model.">
+                        <Num value={p.doubleDoorPackage} onChange={v => setRule('doubleDoorPackage', v)} />
                       </Field>
                     </div>
 
-                    <div
-                      className="formula-panel"
-                      style={{
-                        marginTop: 20,
-                      }}
-                    >
-                      <strong>
-                        Calculated hardware cost
-                      </strong>
+                    <h3 className="rate-catalog-heading" style={{ marginTop: 26 }}>
+                      {WORKSPACE_NAMES[workspace]} framing systems ($/LF)
+                    </h3>
+                    <p className="rate-catalog-note">
+                      Each row matches this workspace's framing dropdown. Choose a system in
+                      Project Information to apply its rate automatically when hardware pricing
+                      is calculated. A custom-named framing system also appears here.
+                    </p>
+                    <div className="model-rate-directory">
+                      {rateFramingModels(workspace, project.framingSystem).map(name => {
+                        const saved = p.framingSystemRates[name];
+                        const custom = typeof saved === 'number';
+                        return (
+                          <div className="model-rate-row" key={`frame-${name}`}>
+                            <div className="model-rate-name">
+                              <strong>{name}</strong>
+                              {project.framingSystem === name && (
+                                <span className="model-rate-active">Selected system</span>
+                              )}
+                              <small>{custom ? 'Custom catalog rate' : 'Using fallback framing rate'}</small>
+                            </div>
+                            <label className="model-rate-cell">
+                              <span>Rate $/LF</span>
+                              <Num value={custom ? saved : p.framingRatePerLF}
+                                onChange={v => setFramingModelRate(name, v)} />
+                            </label>
+                            <button type="button" className="btn btn-quiet model-rate-reset"
+                              disabled={!custom}
+                              onClick={() => setFramingModelRate(name, null)}
+                              title="Restore this model to the default framing rate">
+                              ↺ Default
+                            </button>
+                          </div>
+                        );
+                      })}
+                    </div>
 
+                    {workspace === 'storefront' ? (
+                      <>
+                        <h3 className="rate-catalog-heading" style={{ marginTop: 27 }}>
+                          Storefront entrance door models ($ / assembly)
+                        </h3>
+                        <p className="rate-catalog-note">
+                          Each door model has its own single-door and double-door rate.
+                          Select a Door Model / Type in the Storefront project and use a
+                          single- or double-door opening to apply its matching package.
+                          Manual hardware prices are never changed.
+                        </p>
+                        <div className="model-rate-directory">
+                          {[
+                            ...STOREFRONT_DOORS.map(item => item.name),
+                            ...(project.storefrontDoorModel.trim() &&
+                              project.storefrontDoorModel !== 'Other' &&
+                              !STOREFRONT_DOORS.some(item => item.name === project.storefrontDoorModel)
+                              ? [project.storefrontDoorModel] : []),
+                          ].map(name => {
+                            const single = p.storefrontDoorRatesSingle[name];
+                            const double = p.storefrontDoorRatesDouble[name];
+                            const customSingle = typeof single === 'number';
+                            const customDouble = typeof double === 'number';
+                            return (
+                              <div className="model-rate-row model-rate-row--doors" key={`door-${name}`}>
+                                <div className="model-rate-name">
+                                  <strong>{name}</strong>
+                                  {project.storefrontDoorModel === name && (
+                                    <span className="model-rate-active">Selected door model</span>
+                                  )}
+                                  <small>
+                                    {customSingle || customDouble
+                                      ? 'Has custom package rate(s)'
+                                      : 'Using fallback door package rates'}
+                                  </small>
+                                </div>
+                                <label className="model-rate-cell">
+                                  <span>Single $/assembly</span>
+                                  <Num value={customSingle ? single : p.singleDoorPackage}
+                                    onChange={v => setDoorModelRate(name, 'single', v)} />
+                                  {customSingle && <button type="button" className="btn btn-quiet"
+                                    onClick={() => setDoorModelRate(name, 'single', null)}>↺ Default</button>}
+                                </label>
+                                <label className="model-rate-cell">
+                                  <span>Double $/assembly</span>
+                                  <Num value={customDouble ? double : p.doubleDoorPackage}
+                                    onChange={v => setDoorModelRate(name, 'double', v)} />
+                                  {customDouble && <button type="button" className="btn btn-quiet"
+                                    onClick={() => setDoorModelRate(name, 'double', null)}>↺ Default</button>}
+                                </label>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </>
+                    ) : (
+                      <p className="rate-catalog-note" style={{ marginTop: 20 }}>
+                        {WORKSPACE_NAMES[workspace]} currently has no manufacturer-specific
+                        door-model dropdown. Its single- and double-door packages (when
+                        applicable) use the separate fallback rates above. No door models
+                        are added to this workspace.
+                      </p>
+                    )}
+
+                    <div className="formula-panel" style={{ marginTop: 22 }}>
+                      <strong>Calculated hardware cost</strong>
                       <code>
-                        Framing LF × Framing Rate +
-                        Door Package + Accessories
+                        Framing LF × selected system rate + selected door package
+                        + additional hardware (per assembly)
                       </code>
-
                       <p>
-                        Opening-specific framing rates
-                        and accessories can still be
-                        overridden under the active
-                        estimating workspace.
+                        Rates are stored in the current workspace's draft and included
+                        in saved estimate backups. Individual framing-rate overrides take
+                        priority. Existing manually entered hardware costs remain unchanged.
                       </p>
                     </div>
                   </section>
@@ -7615,7 +7770,7 @@ export default function Home() {
 
           <footer className="footer">
             <span>
-              Aspect Glasswork · V1.7.24
+              Aspect Glasswork · V1.7.26
             </span>
 
             <span>

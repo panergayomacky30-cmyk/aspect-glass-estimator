@@ -253,3 +253,113 @@ details[style] strong[style*="color"] { color: #1766a4 !important; }
     z-index: 3;
   }
 }
+
+
+/* V1.7.21 — Google Sheets via Excel upload (all four workspaces). */
+.google-sheets-export {
+  margin-top: 16px;
+  padding: 17px 15px;
+  border-radius: 11px;
+  border: 1px solid rgba(188, 218, 241, .35);
+  background: rgba(235, 246, 255, .09);
+}
+.google-sheets-export-title {
+  display: block;
+  color: #e3f3ff;
+  font-size: 12px;
+  font-weight: 800;
+  margin-bottom: 7px;
+}
+.google-sheets-export-explanation,
+.google-sheets-export-steps {
+  color: #d1e6f6;
+  font-size: 11px;
+  line-height: 1.65;
+  margin: 0 0 12px;
+}
+.google-sheets-export-steps {
+  font-size: 10px;
+  color: #b2d2e8;
+  margin: 12px 0 0;
+}
+.google-sheets-export-download,
+.google-sheets-export-drive {
+  display: block;
+  width: 100%;
+  padding: 10px 9px;
+  border-radius: 7px;
+  font-size: 11px;
+  font-weight: 700;
+  text-align: center;
+  line-height: 1.45;
+}
+.google-sheets-export-download {
+  border: 1px solid #72b7e2;
+  background: #eaf4fd;
+  color: #124f7c;
+}
+.google-sheets-export-download:hover:not(:disabled) {
+  background: #d7ecfb;
+}
+.google-sheets-export-download:disabled { opacity: .48; }
+.google-sheets-export-drive {
+  color: #e1f2ff;
+  border: 1px solid rgba(174, 211, 238, .55);
+  margin-top: 8px;
+  text-decoration: none;
+}
+.google-sheets-export-drive:hover { background: rgba(234, 244, 253, .13); }
+@media print {
+  .google-sheets-export { display: none !important; }
+}
+
+
+/* V1.7.25 — Hardware inputs form a three-column row in every workspace.
+   Preserve two columns for Manual mode and stack on narrow displays. */
+.hardware-pricing-row {
+  grid-column: 1 / -1;
+  display: grid;
+  column-gap: 17px;
+  row-gap: 15px;
+  align-items: start;
+  min-width: 0;
+}
+.hardware-pricing-row--calculated {
+  grid-template-columns: minmax(0, 1.55fr) minmax(0, 1fr) minmax(0, 1fr);
+}
+.hardware-pricing-row--manual {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+.hardware-pricing-row > .field { min-width: 0; }
+@media (max-width: 1200px) and (min-width: 761px) {
+  .hardware-pricing-row--calculated { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .hardware-pricing-row--calculated > .field:first-child { grid-column: 1 / -1; }
+}
+@media (max-width: 760px) {
+  .hardware-pricing-row--calculated,
+  .hardware-pricing-row--manual { grid-template-columns: 1fr; }
+}
+
+/* V1.7.26: Workspace-specific framing and Storefront door-model rate catalogs */
+.rate-catalog-heading { font-size: 14px; font-weight: 800; color: #183a59; margin: 12px 0 10px; }
+.rate-catalog-note { font-size: 11px; line-height: 1.65; color: #6b8296; margin: 0 0 13px; }
+.model-rate-directory { border: 1px solid #dce7f1; border-radius: 10px; overflow: hidden; background: #fff; }
+.model-rate-row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(135px, 180px) 82px; gap: 14px; align-items: center; padding: 13px 15px; border-top: 1px solid #e5edf4; }
+.model-rate-row:first-child { border-top: none; }
+.model-rate-row:nth-child(2n) { background: #f8fbfe; }
+.model-rate-row--doors { grid-template-columns: minmax(0,1.2fr) repeat(2, minmax(110px, .75fr)); }
+.model-rate-name { min-width: 0; display: flex; flex-wrap: wrap; align-items: center; gap: 5px 8px; }
+.model-rate-name strong { font-size: 11px; line-height: 1.5; color: #173a5b; overflow-wrap: anywhere; }
+.model-rate-name small { font-size: 10px; color: #71869a; width: 100%; }
+.model-rate-active { background: #e2f3ff; border: 1px solid #cae5f5; border-radius: 5px; padding: 3px 6px; color: #226aa0; font-size: 9px; font-weight: 700; }
+.model-rate-cell { min-width: 0; display: grid; gap: 5px; }
+.model-rate-cell > span { font-size: 10px; color: #506e87; font-weight: 700; }
+.model-rate-cell .input { padding: 9px 10px; font-size: 12px; }
+.model-rate-cell .btn { justify-self: start; font-size: 10px; padding: 3px 2px; }
+.model-rate-reset { font-size: 10px; padding: 5px 3px; }
+.model-rate-reset:disabled { opacity: .38; cursor: default; }
+@media (max-width: 750px) {
+  .model-rate-row, .model-rate-row--doors { grid-template-columns: repeat(2, minmax(0,1fr)); gap: 12px; }
+  .model-rate-name { grid-column: 1 / -1; }
+  .model-rate-reset { justify-self: start; }
+}
