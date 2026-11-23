@@ -5,6 +5,9 @@ import './globals.css';
 export const metadata: Metadata = {
   title: 'Aspect | Storefront Estimator',
   description: 'Storefront glazing budget estimating workspace',
+  icons: {
+    icon: '/aspect-glasswork-logo.png',
+  },
 };
 
 export default function RootLayout({ children }: Readonly<{ children: ReactNode }>) {

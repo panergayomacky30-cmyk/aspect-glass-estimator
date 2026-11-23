@@ -21,15 +21,55 @@ import type {
   StorefrontOpening,
 } from '../lib/types';
 
-// ASPECT GLASSWORK ESTIMATING STUDIO V1.7.26
+// ASPECT GLASSWORK ESTIMATING STUDIO V1.7.32
 // Blue and white theme, 13 Storefront glass specs, 8 Windows glass specs,
 // 20 Windows-only window types; unnumbered framing and door dropdowns.
 // Storefront framing AND door models now have an Other choice with a custom
 // text field shown only when Other is selected (including saved custom data).
-// Windows, Curtain Walls, and Office Fit-Out keep their previous dropdowns.
+// Windows and Curtain Walls keep their existing framing dropdowns.
+// Office Fit-Out uses three independent channel selectors in V1.7.31.
 // New estimates in all workspaces prompt for Frame Finish; saved finishes are kept.
 // All workspaces support custom frame finishes; calculations are unchanged.
 // Existing estimating formulas, saved projects and model dropdowns are retained.
+// V1.7.32: Office Fit-Out Type dropdown expanded to the 32 choices in four
+// groups from the supplied list (partitions, doors/combinations, specialty,
+// other glasswork). Preserves legacy fixed/single/double door pricing types.
+// Removed per-opening channel selection UI from Office Fit-Out takeoff;
+// channel choices now apply at PROJECT level only. Legacy unit overrides
+// remain in saved data for compatibility, but no longer affect exports.
+// No glass, framing, or door pricing formulas were changed.
+// V1.7.31: Office Fit-Out now offers independent channel choices for
+// Above Sidelites, Walls and Below Sidelites, with exact option lists from
+// the supplied screenshots and a dedicated expanded frame finish palette.
+// Project-level selections save to existing browser-local estimates.
+// Excel/CSV display project-level channel selections. Existing
+// framing LF and its pricing calculations are NOT silently reallocated among
+// the three channel types; that requires measured component-specific LF.
+// V1.7.30: Curtain Walls calculated glass pricing uses mentor's usual
+// 0.5-inch deduction PER SIDE of each equal-size lite (1 inch from
+// width and height), editable per Curtain Wall unit. Manual glass costs,
+// Storefront/Windows 2-inch-per-side rules, Office Fit-Out, hardware,
+// gross opening area and frame LF remain unchanged. Curtain Wall CSV,
+// Excel and direct Google Sheets export reflect the new pricing area.
+// V1.7.29: Balanced Storefront calculated hardware pricing layout when
+// a unit contains a door: 2-column grid with Hardware pricing method and
+// Framing Rate in the top row; Additional hardware (left) and Door Model
+// Package (right) directly next to one another on the second row. Doorless units retain
+// the 3-column row. Pricing calculations and all other workspaces unchanged.
+// V1.7.28: The Storefront project Door Model / Type selection at the TOP
+// is the only active model selector. Removed duplicate per-unit model field
+// from calculated hardware pricing. Door Model Package ($/assembly) remains
+// editable per opening and uses the selected project model's catalog rate.
+// Legacy per-unit model text is retained in saved records for data safety,
+// but is no longer used for current model lookup. Per-unit price overrides
+// remain active and are shown in the UI.
+// V1.7.27: Storefront door model package ($/assembly) is shown separately
+// under the frame LF rate when any Storefront Type contains a door,
+// including single/double doors combined with sidelites or transoms.
+// The per-unit door model can inherit from the project or be selected
+// independently; unit door rate overrides are saved. Specialty doors require
+// an explicit price rather than inheriting an unrelated standard package.
+// Manual hardware pricing and non-Storefront workspaces are unchanged.
 // V1.7.26: Workspace-specific manufacturer/system framing-rate catalogs,
 // and Storefront door-model single/double package catalogs. Selected model
 // now supplies calculated hardware rates, with per-opening overrides intact.
@@ -43,7 +83,7 @@ import type {
 // No pricing formulas changed.
 // V1.7.23: Calculated glass pricing in Storefront and Windows (including
 // storefront doors) deducts 2 inches on EACH side of EACH glass lite.
-// Manual glass pricing and all other workspaces retain V1.7.22 behavior.
+// Curtain Walls adopted their separate shop allowance in V1.7.30.
 // Gross opening area and frame LF are not reduced by the glass cut allowance.
 // V1.7.22: Windows now uses Storefront county/hardware markup and glass
 // manufacturer surcharge + sales tax pricing, including live worksheets and Excel.
@@ -78,25 +118,36 @@ function usesCountyPricing(workspace: Workspace): boolean {
 type Tab = Workspace | 'pricing' | 'saved';
 type Mode = 'calculated' | 'manual';
 
-// Aspect Glasswork mentor's shop ESTIMATING allowance, not an approved
-// manufacturer fabrication or field-measurement rule.
+// Mentor's preliminary SHOP ESTIMATING deductions, not manufacturer-verified
+// fabrication sizes. Storefront/Windows: 2 in per side. Curtain Walls:
+// usually 0.5 in per side, with a per-unit editable override.
 const SHOP_GLASS_CUT_EDGE_DEDUCTION_IN = 2;
+const CURTAIN_WALL_DEFAULT_EDGE_DEDUCTION_IN = 0.5;
 function usesShopGlassCut(workspace: Workspace, mode: Mode): boolean {
-  return usesCountyPricing(workspace) && mode === 'calculated';
+  return mode === 'calculated' &&
+    (usesCountyPricing(workspace) || workspace === 'curtain-walls');
+}
+function glassCutDeductionPerSide(workspace: Workspace, o: Opening): number | null {
+  if (!usesShopGlassCut(workspace, o.glassMode)) return null;
+  return workspace === 'curtain-walls'
+    ? o.curtainWallEdgeDeductionIn
+    : SHOP_GLASS_CUT_EDGE_DEDUCTION_IN;
 }
 
 // Columns/rows represent EQUAL glass lites in this simplified estimate.
-// For different sized doors, sidelites or transoms, enter each lite or
-// same-sized lite group as its own unit rather than averaging their sizes.
+// For different-sized pieces, enter each lite or same-sized group as its
+// own unit rather than averaging sizes.
 function estimatedGlassCut(
   width: number,
   height: number,
   columns: number,
   rows: number,
-  quantity: number
+  quantity: number,
+  deductionPerSide = SHOP_GLASS_CUT_EDGE_DEDUCTION_IN
 ): { widthEach: number; heightEach: number; totalSF: number } | null {
-  const widthEach = width / columns - 2 * SHOP_GLASS_CUT_EDGE_DEDUCTION_IN;
-  const heightEach = height / rows - 2 * SHOP_GLASS_CUT_EDGE_DEDUCTION_IN;
+  if (!Number.isFinite(deductionPerSide) || deductionPerSide < 0) return null;
+  const widthEach = width / columns - 2 * deductionPerSide;
+  const heightEach = height / rows - 2 * deductionPerSide;
   if (widthEach <= 0 || heightEach <= 0) return null;
   return {
     widthEach,
@@ -427,6 +478,35 @@ function storefrontLegacyType(type: string): StorefrontOpening['openingType'] {
   return 'fixed';
 }
 
+// Storefront Type determines whether this UNIT contains a door. Earlier
+// versions used only the legacy openingType and overlooked specialty doors.
+// Standard mixed types (door + sidelite/transom) use the same SINGLE/DOUBLE
+// door package as the door alone. Multiple glazing sections do not multiply
+// that door package. Specialty doors are priced only with a unit-specific
+// rate: generic aluminum entrance packages must not be silently assumed.
+type DoorPackageKind = 'single' | 'double' | 'specialty' | null;
+function storefrontDoorPackageKind(
+  storefrontType: string,
+  legacyType: StorefrontOpening['openingType']
+): DoorPackageKind {
+  const label = storefrontType.trim().toLowerCase();
+  if (!label) {
+    return legacyType === 'single-door' ? 'single'
+      : legacyType === 'double-door' ? 'double' : null;
+  }
+  if (!label.includes('door')) return null;
+  if (/frameless|herculite|bi-fold|folding|revolving|balanced/.test(label)) {
+    return 'specialty';
+  }
+  if (/double door|uneven pair|bi-parting|double-door/.test(label)) {
+    return 'double';
+  }
+  if (/single door|single sliding storefront door/.test(label)) {
+    return 'single';
+  }
+  return 'specialty';
+}
+
 function legacyStorefrontLabel(type: StorefrontOpening['openingType']): string {
   return type === 'single-door'
     ? 'Single door'
@@ -491,11 +571,163 @@ const CURTAIN_WALL_FRAMING_SYSTEMS = [
   'Unitized aluminum curtain wall framing',
 ] as const;
 
+// OFFICE FIT-OUT V1.7.32 — the 32 Type options in the supplied reference.
+// This is a descriptive assembly classification: the existing grid inputs
+// and generic single/double door package calculations remain unchanged.
+const OFFICE_FIT_OUT_TYPE_GROUPS = [
+  {
+    label: 'A. Standard Office Glazing & Partitions (6 Types)',
+    options: [
+      'Fixed Glazing',
+      'Full-Height Glass Partition',
+      'Partial-Height Glass Partition',
+      'Multi-Panel Glass Partition',
+      'Corner Glass Partition (L-Shaped)',
+      'U-Shaped Glass Partition',
+    ],
+  },
+  {
+    label: 'B. Office Doors & Glass Combinations (12 Types)',
+    options: [
+      'Single Door',
+      'Double Door',
+      'Single Door + Sidelite',
+      'Double Door + Sidelite',
+      'Single Door + Transom',
+      'Double Door + Transom',
+      'Single Door + Sidelite + Transom',
+      'Double Door + Sidelite + Transom',
+      'Frameless Glass Door',
+      'Sliding Glass Door',
+      'Single Door + Double Sidelites',
+      'Double Door + Double Sidelites',
+    ],
+  },
+  {
+    label: 'C. Specialty & Decorative Interior Glass (6 Types)',
+    options: [
+      'Fluted Glass Partition',
+      'Curved Glass Partition',
+      'Curved Fluted Glass Partition',
+      'Frosted / Privacy Glass Partition',
+      'Acoustic Glass Partition',
+      'Fire-Rated Glass Partition',
+    ],
+  },
+  {
+    label: 'D. Other Interior Glasswork (8 Types)',
+    options: [
+      'Fixed Interior Glass Panel',
+      'Interior Glass Screen',
+      'Glass Reception Enclosure',
+      'Interior Glass Railing',
+      'Glass Mirror Panel',
+      'Glass Partition with Return',
+      'Glass Conference Room Enclosure',
+      'Interior Glass Divider with Door',
+    ],
+  },
+] as const;
+const OFFICE_FIT_OUT_TYPE_OPTIONS: readonly string[] =
+  OFFICE_FIT_OUT_TYPE_GROUPS.flatMap(group => [...group.options]);
+
+function officeFitOutLegacyType(type: string): StorefrontOpening['openingType'] {
+  const name = type.toLowerCase();
+  if (name.startsWith('double door')) return 'double-door';
+  if (name.startsWith('single door') || name.includes('glass door') ||
+      name === 'interior glass divider with door') return 'single-door';
+  return 'fixed';
+}
+
+function legacyOfficeFitOutType(type: StorefrontOpening['openingType']): string {
+  return type === 'single-door' ? 'Single Door'
+    : type === 'double-door' ? 'Double Door' : 'Fixed Glazing';
+}
+
 const OFFICE_FIT_OUT_FRAMING_SYSTEMS = [
   'Aluminum-framed interior glass partition',
   'Frameless interior glass partition',
   'Interior storefront-style framing',
 ] as const;
+
+// OFFICE FIT-OUT V1.7.31 — channel choices transcribed from user references.
+// These are independent selections, not alternative names for one frame.
+const OFFICE_CHANNEL_CHOICES = {
+  aboveSidelites: [
+    'None', 'UC Regular U-Channel', 'B5B Smoke Baffle Channel',
+    'HC1 White Hat channel', 'NH2 Narrow Header/Wide U-Channel',
+    'No Channel', 'Windscreen Base Shoe',
+    'WU1 1.5" WET GLAZE U-CHANNEL', 'WU2 2" Tall U-Channel',
+  ],
+  walls: [
+    'None', 'UC Regular U-Channel', 'SC Shallow U-Channel',
+    '4" Wall Jamb (CLAD)', '4" Jamb with pocket', '4" Wall Jamb (Non-Clad)',
+    '4-1/2" Wall Jamb (CLAD)', '4-1/2" Wall Jamb (Non-Clad)',
+    '4-1/2" Jamb with pocket', '6" Wall Jamb (CLAD)',
+    '6" Wall Jamb (Non-Clad)', '6" Jamb with pocket',
+    'EB500 Base Channel', 'EB750 Base Channel', 'HC1 White Hat channel',
+    'NH2 Narrow Header/Wide U-Channel', 'No Channel',
+    'SDCD DEEP U-CHNL.', 'SR2 Rail as wall channel',
+    'SR4S Rail as wall channel', 'SR6 Rail as wall channel',
+    'Windscreen Base Shoe', 'WU1 1.5" WET GLAZE U-CHANNEL',
+    'WU2 2" Tall U-Channel', 'WU3 1" WET GLAZE U-CHANNEL',
+  ],
+  belowSidelites: [
+    'None', 'UC Regular U-Channel', 'SC Shallow U-Channel',
+    '4" Jamb with pocket', '4-1/2" Jamb with pocket', '6" Jamb with pocket',
+    'EB500 Base Channel', 'EB750 Base Channel', 'HC1 White Hat channel',
+    'NH2 Narrow Header/Wide U-Channel', 'No Channel', 'SDCD DEEP U-CHNL.',
+    'Windscreen Base Shoe', 'WU1 1.5" WET GLAZE U-CHANNEL',
+    'WU2 2" Tall U-Channel', 'WU3 1" WET GLAZE U-CHANNEL',
+  ],
+} as const;
+
+type OfficeChannelKey = keyof typeof OFFICE_CHANNEL_CHOICES;
+type OfficeChannelSelection = Record<OfficeChannelKey, string>;
+const OFFICE_CHANNEL_KEYS: OfficeChannelKey[] = [
+  'aboveSidelites', 'walls', 'belowSidelites',
+];
+const OFFICE_CHANNEL_LABELS: Record<OfficeChannelKey, string> = {
+  aboveSidelites: 'Above Sidelites',
+  walls: 'Walls',
+  belowSidelites: 'Below Sidelites',
+};
+function emptyOfficeChannels(): OfficeChannelSelection {
+  return { aboveSidelites: '', walls: '', belowSidelites: '' };
+}
+function normalizeOfficeChannels(input: unknown): OfficeChannelSelection {
+  const saved = obj(input);
+  return {
+    aboveSidelites: typeof saved.aboveSidelites === 'string' ? saved.aboveSidelites : '',
+    walls: typeof saved.walls === 'string' ? saved.walls : '',
+    belowSidelites: typeof saved.belowSidelites === 'string' ? saved.belowSidelites : '',
+  };
+}
+function effectiveOfficeChannels(project: Project): OfficeChannelSelection {
+  return project.officeFitOutChannels ?? emptyOfficeChannels();
+}
+function officeChannelSummary(project: Project): string {
+  const chosen = effectiveOfficeChannels(project);
+  return OFFICE_CHANNEL_KEYS.map(key =>
+    `${OFFICE_CHANNEL_LABELS[key]}: ${chosen[key] || 'Not selected'}`
+  ).join(' | ');
+}
+
+// Office Fit-Out uses its own finish list; other workspaces are untouched.
+const OFFICE_FIT_OUT_FINISH_OPTIONS = [
+  'Oil Rubbed Bronze', 'Satin Brass', 'Bronze Anod',
+  'Brushed Stainless', 'Brushed Stainless Anodized',
+  'Clear Anodized', 'Dark Bronze (313)', 'Dark Bronze Anodized',
+  'Duranodic Bronze', 'Light Oil Rubbed Bronze',
+  'Match Customer Sample Oil Rubbed Bronze', 'Matte Black Lava Powder Coat',
+  'Medium Oil Rubbed Bronze', 'Polished Brass', 'Polished Stainless',
+  'Powder Coat', 'Satin Anodized', 'Standard Black Powder Coat',
+  'Standard White Powder Coat', 'White', 'Custom Anodized',
+  'Kynar', 'Painted', 'Custom / Other',
+] as const;
+function finishOptionsFor(workspace: Workspace): readonly string[] {
+  return workspace === 'office-fit-out' ? OFFICE_FIT_OUT_FINISH_OPTIONS : FRAME_FINISH_OPTIONS;
+}
 
 const OTHER_NON_STOREFRONT_FRAMING = 'Other';
 
@@ -697,6 +929,19 @@ type Opening = StorefrontOpening & {
   glassStyle: GlassStyle;
   glassMode: Mode;
   hardwareMode: Mode;
+  // Curtain Wall shop glass cut allowance per side, in inches.
+  // Applies ONLY in the Curtain Walls workspace with calculated glass pricing.
+  curtainWallEdgeDeductionIn: number;
+  // Legacy V1.7.27 per-unit door-model entry (retained on load/export).
+  // Active estimates always use the project-level Door Model / Type instead.
+  storefrontDoorModelOverride: string;
+  // Office Fit-Out descriptive Type, selected independently for each unit.
+  officeFitOutType: string;
+  // Legacy field retained for loading older V1.7.31 saved estimates.
+  // V1.7.32 uses PROJECT channels only and does not apply unit overrides.
+  officeFitOutChannelOverrides: OfficeChannelSelection;
+  // A rate per DOOR ASSEMBLY, not a framing LF rate.
+  doorRateOverride: number | null;
   manualGlassCostEach: number;
   manualHardwareCostEach: number;
   opexPerAssembly: number;
@@ -714,6 +959,7 @@ function displayType(o: Opening, workspace: Workspace): string {
     return o.storefrontType || legacyStorefrontLabel(o.openingType);
   }
   if (workspace === 'windows') return displayWindowType(o);
+  if (workspace === 'office-fit-out') return o.officeFitOutType || legacyOfficeFitOutType(o.openingType);
   return formatOpeningType(o.openingType);
 }
 
@@ -764,6 +1010,7 @@ type Project = Omit<
 
   // NEW — Saved on Storefront projects
   storefrontDoorModel: string;
+  officeFitOutChannels: OfficeChannelSelection;
 };
 
 type Saved = {
@@ -780,13 +1027,16 @@ type Line = {
   height: number;
   glassSF: number; // gross opening area, never reduced
   glassPricingSF: number; // area used for calculated glass price
-  glassCutWidthEach: number | null; // only in calculated Storefront/Windows
+  glassCutWidthEach: number | null; // only for calculated shop-cut glass
   glassCutHeightEach: number | null;
   glassCutSF: number | null;
+  glassCutDeductionEach: number | null;
   frameLF: number;
   glassRate: number;
   frameRate: number;
   doorRate: number;
+  doorPackageKind: DoorPackageKind;
+  doorModelUsed: string;
   glassCost: number;
   hardwareCost: number;
   totalGlassCost: number;
@@ -912,7 +1162,11 @@ function cleanModelRateMap(value: unknown): Record<string, number | null> {
 function rateFramingModels(workspace: Workspace, selected: string): string[] {
   const choices = workspace === 'storefront'
     ? STOREFRONT_FRAMES.map(item => item.name)
-    : [...framingOptionsFor(workspace)];
+    : workspace === 'office-fit-out'
+      ? Array.from(new Set(OFFICE_CHANNEL_KEYS.flatMap(key =>
+          OFFICE_CHANNEL_CHOICES[key].filter(name => name !== 'None' && name !== 'No Channel')
+        )))
+      : [...framingOptionsFor(workspace)];
   const custom = selected.trim();
   if (custom && custom !== 'Other' &&
       !choices.includes(custom) &&
@@ -933,19 +1187,26 @@ function catalogDoorPackageRate(
   p: Rules,
   workspace: Workspace,
   model: string,
-  openingType: Opening['openingType']
-): number {
+  openingType: Opening['openingType'],
+  storefrontType: string
+): number | null {
+  if (workspace === 'storefront') {
+    const kind = storefrontDoorPackageKind(storefrontType, openingType);
+    if (kind === null) return 0;
+    // A balanced, revolving, frameless, or folding door has no safe standard
+    // single/double aluminum door-package default. Quote it explicitly.
+    if (kind === 'specialty') return null;
+    const generic = kind === 'single' ? p.singleDoorPackage : p.doubleDoorPackage;
+    if (!model || model === 'Other') return generic;
+    const assigned = kind === 'single'
+      ? p.storefrontDoorRatesSingle[model]
+      : p.storefrontDoorRatesDouble[model];
+    return typeof assigned === 'number' && Number.isFinite(assigned) && assigned >= 0
+      ? assigned : generic;
+  }
   if (openingType !== 'single-door' && openingType !== 'double-door') return 0;
-  const generic = openingType === 'single-door'
-    ? p.singleDoorPackage
-    : p.doubleDoorPackage;
-  if (workspace !== 'storefront' || !model || model === 'Other') return generic;
-  const assigned = openingType === 'single-door'
-    ? p.storefrontDoorRatesSingle[model]
-    : p.storefrontDoorRatesDouble[model];
-  return typeof assigned === 'number' && Number.isFinite(assigned) && assigned >= 0
-    ? assigned
-    : generic;
+  return openingType === 'single-door'
+    ? p.singleDoorPackage : p.doubleDoorPackage;
 }
 
 // =====================================================
@@ -1023,6 +1284,7 @@ function normalizeAppProject(
       typeof raw.storefrontDoorModel === 'string'
         ? raw.storefrontDoorModel
         : '',
+    officeFitOutChannels: normalizeOfficeChannels(raw.officeFitOutChannels),
 
     openings: base.openings.map((o, i) => {
       const r = obj(originals[i]);
@@ -1046,6 +1308,12 @@ function normalizeAppProject(
             ? r.customWindowType
             : '',
 
+        officeFitOutType:
+          typeof r.officeFitOutType === 'string' &&
+          OFFICE_FIT_OUT_TYPE_OPTIONS.includes(r.officeFitOutType)
+            ? r.officeFitOutType
+            : legacyOfficeFitOutType(o.openingType),
+
         glassSpecification:
           typeof r.glassSpecification === 'string' &&
           r.glassSpecification.trim()
@@ -1067,6 +1335,22 @@ function normalizeAppProject(
           r.hardwareMode === 'manual'
             ? 'manual'
             : 'calculated',
+
+        curtainWallEdgeDeductionIn:
+          typeof r.curtainWallEdgeDeductionIn === 'number' &&
+          Number.isFinite(r.curtainWallEdgeDeductionIn) &&
+          r.curtainWallEdgeDeductionIn >= 0
+            ? r.curtainWallEdgeDeductionIn
+            : CURTAIN_WALL_DEFAULT_EDGE_DEDUCTION_IN,
+
+        storefrontDoorModelOverride:
+          typeof r.storefrontDoorModelOverride === 'string'
+            ? r.storefrontDoorModelOverride : '',
+        officeFitOutChannelOverrides: normalizeOfficeChannels(r.officeFitOutChannelOverrides),
+        doorRateOverride:
+          typeof r.doorRateOverride === 'number' &&
+          Number.isFinite(r.doorRateOverride) && r.doorRateOverride >= 0
+            ? r.doorRateOverride : null,
 
         manualGlassCostEach: nonneg(
           r.manualGlassCostEach
@@ -1204,6 +1488,7 @@ function freshOpening(
     storefrontType: 'Fixed glazing',
     windowType: WINDOWS_WINDOW_TYPES[0],
     customWindowType: '',
+    officeFitOutType: OFFICE_FIT_OUT_TYPE_OPTIONS[0],
 
     mark:
       `${WORKSPACE_PREFIX[workspace]}-` +
@@ -1225,12 +1510,16 @@ function freshOpening(
 
     glassMode: 'calculated',
     hardwareMode: 'calculated',
+    curtainWallEdgeDeductionIn: CURTAIN_WALL_DEFAULT_EDGE_DEDUCTION_IN,
 
     manualGlassCostEach: 0,
     manualHardwareCostEach: 0,
 
     glassRateOverride: null,
     frameRateOverride: null,
+    storefrontDoorModelOverride: '',
+    officeFitOutChannelOverrides: emptyOfficeChannels(),
+    doorRateOverride: null,
 
     opexPerAssembly: 0,
     targetGrossNetPct: null,
@@ -1535,18 +1824,20 @@ function calculate(
 
     const qty = o.quantity;
 
-    // Gross opening area always includes the full overall frame footprint.
-    // Glass pricing applies the shop deduction only in CALCULATED mode for
-    // Storefront and Windows, regardless of selected frame or door model.
+    // Gross opening area includes the entire frame footprint, unchanged.
+    // CALCULATED glass uses 2 in per side for Storefront/Windows, and the
+    // per-unit default 0.5 in per side for Curtain Walls. Manual is untouched.
     const glassSF = w * h / 144 * qty;
-    const applyShopGlassCut = usesShopGlassCut(workspace, o.glassMode);
+    const edgeDeduction = glassCutDeductionPerSide(workspace, o);
+    const applyShopGlassCut = edgeDeduction !== null;
     const glassCut = applyShopGlassCut
-      ? estimatedGlassCut(w, h, o.columns, o.rows, qty)
+      ? estimatedGlassCut(w, h, o.columns, o.rows, qty, edgeDeduction)
       : null;
     if (applyShopGlassCut && glassCut === null) {
       errors.push(
-        `${label}: each glass lite must be over 4 inches wide and high ` +
-        `(overall width / columns and height / rows) for the 2-inch-per-side cut deduction.`
+        `${label}: shop deduction per side must be nonnegative and each glass lite ` +
+        `must be larger than ${2 * edgeDeduction}" in BOTH dimensions ` +
+        `(overall width ÷ columns, overall height ÷ rows).`
       );
       continue;
     }
@@ -1562,9 +1853,31 @@ function calculate(
         (o.rows - 1) * w
       ) / 12 * qty;
 
-    const doorRate = catalogDoorPackageRate(
-      p, workspace, project.storefrontDoorModel, o.openingType
+    const doorPackageKind = workspace === 'storefront'
+      ? storefrontDoorPackageKind(o.storefrontType, o.openingType)
+      : null;
+    // The project's top-level Door Model / Type is the single source of truth.
+    // Per-unit price overrides still work, but duplicate per-unit model
+    // selections from V1.7.27 do not override the project model.
+    const doorModelUsed = workspace === 'storefront'
+      ? project.storefrontDoorModel
+      : '';
+    const doorRateDefault = catalogDoorPackageRate(
+      p, workspace, doorModelUsed, o.openingType, o.storefrontType
     );
+    // A per-unit rate overrides the workspace catalog, but fixed glass
+    // storefront types NEVER incur door charges even if an override exists.
+    const doorRate = workspace === 'storefront' && doorPackageKind === null
+      ? 0
+      : (workspace === 'storefront' && o.doorRateOverride !== null
+        ? o.doorRateOverride : doorRateDefault);
+    if (workspace === 'storefront' && o.hardwareMode === 'calculated' &&
+        doorPackageKind !== null &&
+        (doorRate === null || !Number.isFinite(doorRate) || doorRate < 0)) {
+      errors.push(`${label}: enter a Door Model Package $/assembly for the specialty door.`);
+      continue;
+    }
+    const pricedDoorRate = doorRate ?? 0;
 
     const glassCost =
       o.glassMode === 'manual'
@@ -1576,7 +1889,7 @@ function calculate(
         ? o.manualHardwareCostEach * qty
         : frameLF * frameRate +
           (
-            doorRate +
+            pricedDoorRate +
             o.hardwareAllowance
           ) * qty;
 
@@ -1660,10 +1973,13 @@ function calculate(
       glassCutWidthEach: glassCut?.widthEach ?? null,
       glassCutHeightEach: glassCut?.heightEach ?? null,
       glassCutSF: glassCut?.totalSF ?? null,
+      glassCutDeductionEach: edgeDeduction,
       frameLF,
       glassRate: glassRate ?? 0,
       frameRate,
-      doorRate,
+      doorRate: pricedDoorRate,
+      doorPackageKind,
+      doorModelUsed,
       glassCost,
       hardwareCost,
       totalGlassCost,
@@ -2305,7 +2621,10 @@ function storefrontXlsx(project: Project, totals: Totals, workspace: 'storefront
     infoNumber(43, 'Frame Rate ($/LF)', l.frameRate, 'Applied in app when Hardware Costing Mode = calculated', 25);
     infoNumber(44, 'Glazing Columns', o.columns, 'Snapshot of glazing layout', 32);
     infoNumber(45, 'Glazing Rows', o.rows, 'Snapshot of glazing layout', 32);
-    infoNumber(46, 'Door Package / Assembly', l.doorRate, 'App pricing input; included in calculated hardware', 25);
+    infoNumber(46, 'Door Model Package $/Assembly', l.doorRate,
+      workspace === 'storefront'
+        ? `${l.doorPackageKind ?? 'No door'} · ${l.doorModelUsed || 'No door model selected'} · included once per assembly in calculated hardware`
+        : 'App pricing input; included in calculated hardware', 25);
     infoNumber(47, 'Hardware Allowance / Assembly', o.hardwareAllowance, 'App pricing input; included in calculated hardware', 25);
 
     // These live spreadsheet formulas correspond to the V1.7.23 app formula.
@@ -2329,6 +2648,15 @@ function storefrontXlsx(project: Project, totals: Totals, workspace: 'storefront
     }
     infoNumber(52, 'Gross Opening Area (SF)', l.glassSF, 'Overall gross area, unchanged by shop deduction', 33);
     infoNumber(53, 'Total Glass Lites', o.columns * o.rows * o.quantity, 'Assumes equal-sized lites for each unit', 32);
+    if (workspace === 'storefront') {
+      excelText(sheet, 'A54', 'Door Model Used', 23);
+      excelText(sheet, 'B54', l.doorModelUsed || 'None selected', 27);
+      excelText(sheet, 'C54', `Package type: ${l.doorPackageKind ?? 'No door'}`, 30);
+      excelText(sheet, 'A55', 'Door Package Rate Source', 23);
+      excelText(sheet, 'B55', l.doorPackageKind === null ? 'Not applicable'
+        : o.doorRateOverride === null ? 'Project/model catalog' : 'Per-unit override', 27);
+      excelText(sheet, 'C55', 'Door package is $/assembly (not $/LF)', 30);
+    }
 
     excelText(sheet, 'A56', 'Manual B9/B12 and OPEX B15 are direct amounts; no glass deduction in manual mode.', 30);
     sheet.merges.push('A56:C56');
@@ -2376,8 +2704,10 @@ function workspaceXlsx(project: Project, totals: Totals, workspace: Workspace): 
   excelText(overview, 'A4', 'Client / Contractor', 28);
   excelText(overview, 'B4', project.clientName || 'Not specified', 29);
   overview.merges.push('B4:C4');
-  excelText(overview, 'A5', 'Framing System / Finish', 28);
-  excelText(overview, 'B5', `${project.framingSystem || 'Not specified'} / ${project.finish || 'Not specified'}`, 29);
+  excelText(overview, 'A5', workspace === 'office-fit-out' ? 'Channels / Finish' : 'Framing System / Finish', 28);
+  excelText(overview, 'B5', workspace === 'office-fit-out'
+    ? `${officeChannelSummary(project)} / Finish: ${project.finish || 'Not specified'}`
+    : `${project.framingSystem || 'Not specified'} / ${project.finish || 'Not specified'}`, 29);
   overview.merges.push('B5:C5');
 
   const summaryRows: [number, string, number, 'price' | 'final' | 'plain' | 'subtotal' | 'opex' | 'risk' | 'total' | 'net' | 'percent'][] = [
@@ -2439,8 +2769,10 @@ function workspaceXlsx(project: Project, totals: Totals, workspace: Workspace): 
     const typeName = displayType(o, workspace);
     excelText(sheet, 'B4', `${o.mark} — ${typeName}`, 29);
     sheet.merges.push('B4:C4');
-    excelText(sheet, 'A5', 'Frame System / Finish', 28);
-    excelText(sheet, 'B5', `${project.framingSystem || 'Unspecified'} / ${project.finish || 'Unspecified'}`, 29);
+    excelText(sheet, 'A5', workspace === 'office-fit-out' ? 'Channels / Finish' : 'Frame System / Finish', 28);
+    excelText(sheet, 'B5', workspace === 'office-fit-out'
+      ? `${officeChannelSummary(project)} / Finish: ${project.finish || 'Unspecified'}`
+      : `${project.framingSystem || 'Unspecified'} / ${project.finish || 'Unspecified'}`, 29);
     sheet.merges.push('B5:C5');
 
     const result = (
@@ -2477,7 +2809,10 @@ function workspaceXlsx(project: Project, totals: Totals, workspace: Workspace): 
       o.hardwareMode === 'calculated' ? 'B36*B43+(B46+B47)*B32' : undefined);
     result(10, 'Total Hardware Cost', '(B9+B23)*(1+B24)', line.totalHardwareCost, 'subtotal');
     base(12, `Cost of Glass${o.glassMode === 'manual' ? ' [manual]' : ' [calculated]'}`,
-      line.glassCost, o.glassMode === 'calculated' ? 'B35*B42' : undefined);
+      line.glassCost,
+      o.glassMode === 'calculated'
+        ? (workspace === 'curtain-walls' ? 'B51*B42' : 'B35*B42')
+        : undefined);
     result(13, 'Total Glass Cost', 'B12*(1-B25)', line.totalGlassCost, 'subtotal');
 
     excelText(sheet, 'A15', 'OPEX [manual]', 11);
@@ -2504,7 +2839,8 @@ function workspaceXlsx(project: Project, totals: Totals, workspace: Workspace): 
     infoNumber(32, 'Quantity', o.quantity, 'Number of assemblies; total prices already include quantity', 32);
     infoNumber(33, 'Width (in)', line.width, 'Dimensions at export');
     infoNumber(34, 'Height (in)', line.height, 'Dimensions at export');
-    infoNumber(35, 'Glass Area (SF)', line.glassSF, 'Current app-calculated glass area snapshot', 33);
+    infoNumber(35, workspace === 'curtain-walls' ? 'Gross Opening Area (SF)' : 'Glass Area (SF)',
+      line.glassSF, 'Overall dimensions × quantity ÷ 144, including frame footprint', 33);
     infoNumber(36, 'Frame Length (LF)', line.frameLF, 'Current app-calculated frame length snapshot', 33);
     infoText(37, 'Glass Costing Mode', o.glassMode, 'Calculated SF rate or manual per-assembly cost');
     infoText(38, 'Hardware Costing Mode', o.hardwareMode, 'Calculated LF rate or manual per-assembly cost');
@@ -2518,17 +2854,64 @@ function workspaceXlsx(project: Project, totals: Totals, workspace: Workspace): 
     infoNumber(46, 'Door Package / Assembly', line.doorRate, 'For calculated hardware when applicable', 25);
     infoNumber(47, 'Hardware Allowance / Assembly', o.hardwareAllowance, 'For calculated hardware when applicable', 25);
 
-    excelText(sheet, 'A50', 'Manual costs are direct editable numbers; calculated costs use simple formulas.', 30);
-    sheet.merges.push('A50:C50');
-    excelText(sheet, 'A51', 'Hardware = (hardware cost + fixed fee) × (1 + hardware tax).', 30);
-    sheet.merges.push('A51:C51');
-    excelText(sheet, 'A52', 'Glass = base glass cost × (1 - glass discount); risk = total glass cost × risk %.', 30);
-    sheet.merges.push('A52:C52');
-    excelText(sheet, 'A53', 'Width, height, SF and LF are snapshots; re-export to update geometry.', 30);
-    sheet.merges.push('A53:C53');
-    if (!totals.complete) {
-      excelText(sheet, 'A55', 'PRELIMINARY DRAFT — REVIEW PROJECT VALIDATION BEFORE QUOTING', 21);
+    if (workspace === 'curtain-walls') {
+      // Calculated Curtain Wall: editable glass deduction and live Excel
+      // formulas. Manual pricing is the exact cost typed in the app.
+      if (o.glassMode === 'calculated') {
+        infoNumber(48, 'Glass Deduction / Side (in)', line.glassCutDeductionEach ?? CURTAIN_WALL_DEFAULT_EDGE_DEDUCTION_IN,
+          'Shop estimating allowance; usually 0.5 inch on all four sides', 25);
+        excelText(sheet, 'A49', 'Est. Cut Width / Lite (in)', 23);
+        excelFormula(sheet, 'B49', 'B33/B44-2*B48', line.glassCutWidthEach ?? 0, 24);
+        excelText(sheet, 'C49', 'Overall width / columns - 2 × deduction per side', 30);
+        excelText(sheet, 'A50', 'Est. Cut Height / Lite (in)', 23);
+        excelFormula(sheet, 'B50', 'B34/B45-2*B48', line.glassCutHeightEach ?? 0, 24);
+        excelText(sheet, 'C50', 'Overall height / rows - 2 × deduction per side', 30);
+        excelText(sheet, 'A51', 'Est. Glass Cut Area / Pricing SF', 23);
+        excelFormula(sheet, 'B51', 'B49*B50*B44*B45*B32/144', line.glassCutSF ?? 0, 33);
+        excelText(sheet, 'C51', 'Per lite × count × assemblies; calculated glass cost uses this area', 30);
+      } else {
+        infoText(48, 'Glass Deduction / Side (in)', 'Not applied', 'Manual glass cost already accounts for supplier glass size');
+        infoText(49, 'Est. Cut Width / Lite (in)', 'Not applied', 'Manual price used as entered');
+        infoText(50, 'Est. Cut Height / Lite (in)', 'Not applied', 'Manual price used as entered');
+        infoText(51, 'Est. Glass Cut Area / Pricing SF', 'Not applied', 'Manual price used as entered');
+      }
+      excelText(sheet, 'A54', 'Curtain Wall shop cut: default 0.5 inch from EACH side; editable above.', 30);
+      sheet.merges.push('A54:C54');
+      excelText(sheet, 'A55', 'Manual glass pricing bypasses the cut deduction. Estimating ONLY, not fabrication.', 30);
       sheet.merges.push('A55:C55');
+      excelText(sheet, 'A56', 'Hardware = (hardware cost + fixed fee) × (1 + hardware tax).', 30);
+      sheet.merges.push('A56:C56');
+      excelText(sheet, 'A57', 'Glass = base glass cost × (1 - glass discount); risk = total glass cost × risk %.', 30);
+      sheet.merges.push('A57:C57');
+      excelText(sheet, 'A58', 'Frame LF and gross area are unchanged; re-export to update geometry.', 30);
+      sheet.merges.push('A58:C58');
+      if (!totals.complete) {
+        excelText(sheet, 'A60', 'PRELIMINARY DRAFT — REVIEW PROJECT VALIDATION BEFORE QUOTING', 21);
+        sheet.merges.push('A60:C60');
+      }
+    } else {
+      // Office Fit-Out: show each channel by location in Excel, without
+      // inventing a length allocation or changing hardware formulas.
+      infoText(48, 'Above Sidelites — Channel', effectiveOfficeChannels(project).aboveSidelites || 'Not selected',
+        'Saved channel selection, descriptive only');
+      infoText(49, 'Walls — Channel', effectiveOfficeChannels(project).walls || 'Not selected',
+        'Saved channel selection, descriptive only');
+      infoText(50, 'Below Sidelites — Channel', effectiveOfficeChannels(project).belowSidelites || 'Not selected',
+        'Saved channel selection, descriptive only');
+      excelText(sheet, 'A52', 'Manual costs are direct editable numbers; calculated costs use simple formulas.', 30);
+      sheet.merges.push('A52:C52');
+      excelText(sheet, 'A53', 'Hardware = (hardware cost + fixed fee) × (1 + hardware tax).', 30);
+      sheet.merges.push('A53:C53');
+      excelText(sheet, 'A54', 'Glass = base glass cost × (1 - glass discount); risk = total glass cost × risk %.', 30);
+      sheet.merges.push('A54:C54');
+      excelText(sheet, 'A55', 'Channel selections are recorded only; frame LF × rate remains unchanged.', 30);
+      sheet.merges.push('A55:C55');
+      excelText(sheet, 'A56', 'Measure per-channel LF before using channel-specific material rates.', 30);
+      sheet.merges.push('A56:C56');
+      if (!totals.complete) {
+        excelText(sheet, 'A58', 'PRELIMINARY DRAFT — REVIEW PROJECT VALIDATION BEFORE QUOTING', 21);
+        sheet.merges.push('A58:C58');
+      }
     }
   });
   return packageExcelSheets(sheets);
@@ -2834,7 +3217,7 @@ function RateInput({
   onChange,
 }: {
   label: string;
-  unit: 'SF' | 'LF';
+  unit: 'SF' | 'LF' | 'assembly';
   selected: string;
   defaultRate: number | null;
   override: number | null;
@@ -3016,7 +3399,7 @@ function Worksheet({
             : `${n4(l.frameLF)} LF × ` +
               `${currency(l.frameRate)}/LF + ` +
               `${o.quantity} × (` +
-              `${currency(l.doorRate)} door + ` +
+              `${currency(l.doorRate)} door package/assembly + ` +
               `${currency(o.hardwareAllowance)} additional hardware)`
         }
         result={currency(l.hardwareCost)}
@@ -3165,8 +3548,8 @@ function OpeningFormula({
         <Detail
           title="Estimated glass cut size / pricing area"
           formula={
-            `(${n4(l.width)} ÷ ${o.columns} − 2" left − 2" right) × ` +
-            `(${n4(l.height)} ÷ ${o.rows} − 2" top − 2" bottom); ` +
+            `(${n4(l.width)} ÷ ${o.columns} − ${n4(l.glassCutDeductionEach ?? 0)}" left − ${n4(l.glassCutDeductionEach ?? 0)}" right) × ` +
+            `(${n4(l.height)} ÷ ${o.rows} − ${n4(l.glassCutDeductionEach ?? 0)}" top − ${n4(l.glassCutDeductionEach ?? 0)}" bottom); ` +
             `${o.columns} × ${o.rows} lites × ${o.quantity} assemblies; ` +
             `each ${n4(l.glassCutWidthEach ?? 0)}" × ${n4(l.glassCutHeightEach ?? 0)}"`
           }
@@ -3199,7 +3582,7 @@ function OpeningFormula({
           ? ' Hardware is marked up by the selected county rate; glass is adjusted and taxed.'
           : ' The fixed hardware fee is charged once per unit mark.'}
         {usesShopGlassCut(workspace, o.glassMode)
-          ? ' Calculated glass uses the Aspect Glasswork estimating allowance of 2 inches per side of each equal-sized lite; manual glass costs are not adjusted. Mixed-size doors, sidelites and transoms should be entered as separate units. This is not a fabrication cut list.'
+          ? ` Calculated glass uses the Aspect Glasswork shop allowance of ${n4(l.glassCutDeductionEach ?? 0)} inches per side of each equal-sized lite; manual glass costs are not adjusted. Different-size glass pieces should be separate units. Estimating only, not a fabrication cut list.`
           : ''}
         No material waste allowance is added.
       </p>
@@ -4322,10 +4705,18 @@ export default function Home() {
       'Price',
       'Final Price with CC',
       'Glass Pricing SF',
-      'Estimated Cut Width Each in (calculated Storefront/Windows only)',
-      'Estimated Cut Height Each in (calculated Storefront/Windows only)',
-      'Estimated Glass Cut SF (calculated Storefront/Windows only)',
-      'Glass Cut Deduction Per Side in (calculated Storefront/Windows only)',
+      'Estimated Cut Width Each in (calculated glass only)',
+      'Estimated Cut Height Each in (calculated glass only)',
+      'Estimated Glass Cut SF (calculated glass only)',
+      'Glass Cut Deduction Per Side in (calculated glass only)',
+      'Door Model Used (Storefront)',
+      'Door Package Type (Storefront)',
+      'Door Package Rate $/Assembly (Storefront)',
+      'Door Package Rate Override $/Assembly (Storefront)',
+      'Office Fit-Out Above Sidelites Channel',
+      'Office Fit-Out Walls Channel',
+      'Office Fit-Out Below Sidelites Channel',
+      'Project Frame Finish', 
     ];
 
     const rows = totals.lines.map(l => [
@@ -4362,7 +4753,16 @@ export default function Home() {
       l.glassCutWidthEach === null ? '' : l.glassCutWidthEach.toFixed(4),
       l.glassCutHeightEach === null ? '' : l.glassCutHeightEach.toFixed(4),
       l.glassCutSF === null ? '' : l.glassCutSF.toFixed(4),
-      l.glassCutSF === null ? '' : SHOP_GLASS_CUT_EDGE_DEDUCTION_IN,
+      l.glassCutDeductionEach === null ? '' : l.glassCutDeductionEach,
+      workspace === 'storefront' ? l.doorModelUsed : '',
+      workspace === 'storefront' ? (l.doorPackageKind ?? 'none') : '',
+      workspace === 'storefront' && l.doorPackageKind !== null ? l.doorRate.toFixed(2) : '',
+      workspace === 'storefront' && l.doorPackageKind !== null
+        ? (l.opening.doorRateOverride ?? '') : '',
+      workspace === 'office-fit-out' ? effectiveOfficeChannels(project).aboveSidelites : '',
+      workspace === 'office-fit-out' ? effectiveOfficeChannels(project).walls : '',
+      workspace === 'office-fit-out' ? effectiveOfficeChannels(project).belowSidelites : '',
+      project.finish,
     ]);
 
     download(
@@ -4523,9 +4923,11 @@ export default function Home() {
 
       <header className="topbar">
         <div className="brand">
-          <span className="brand-mark">
-            A<span>.</span>
-          </span>
+          <img
+            src="/aspect-glasswork-logo.png"
+            alt="Aspect Glasswork logo"
+            className="brand-logo-img"
+          />
 
           <span className="brand-names">
             <strong>ASPECT GLASSWORK</strong>
@@ -4536,7 +4938,7 @@ export default function Home() {
         <div className="topbar-right">
           <span className="top-pill">
             <span className="green-dot" />
-            Browser-based · V1.7.26
+            Browser-based · V1.7.32
           </span>
 
           <span className="autosave">
@@ -4641,7 +5043,7 @@ export default function Home() {
 
           <div className="sidebar-help">
             <strong>
-              Estimator V1.7.26
+              Estimator V1.7.32
             </strong>
 
             <p>
@@ -5091,8 +5493,48 @@ export default function Home() {
                             </div>
                           )}
                       </div>
+                    ) : workspace === 'office-fit-out' ? (
+                      <div className="office-fit-out-channel-panel">
+                        <div className="office-fit-out-channel-heading">
+                          <strong>Office Fit-Out Framing Channels</strong>
+                          <span>Select project-wide channels for Above Sidelites, Walls, and Below Sidelites.</span>
+                        </div>
+                        <div className="office-fit-out-channel-grid">
+                          {OFFICE_CHANNEL_KEYS.map(key => (
+                            <Field key={key} label={`${OFFICE_CHANNEL_LABELS[key]} — Channel`}>
+                              <select
+                                className="input"
+                                aria-label={`Office Fit-Out ${OFFICE_CHANNEL_LABELS[key]} Channel`}
+                                value={project.officeFitOutChannels[key]}
+                                onChange={e => setProject(old => ({
+                                  ...old,
+                                  officeFitOutChannels: {
+                                    ...old.officeFitOutChannels,
+                                    [key]: e.target.value,
+                                  },
+                                }))}
+                              >
+                                <option value="">— Select Channel —</option>
+                                {project.officeFitOutChannels[key] &&
+                                  !OFFICE_CHANNEL_CHOICES[key].some(x => x === project.officeFitOutChannels[key]) && (
+                                    <option value={project.officeFitOutChannels[key]}>
+                                      {project.officeFitOutChannels[key]} (saved)
+                                    </option>
+                                  )}
+                                {OFFICE_CHANNEL_CHOICES[key].map(name => (
+                                  <option key={name} value={name}>{name}</option>
+                                ))}
+                              </select>
+                            </Field>
+                          ))}
+                        </div>
+                        <p className="field-hint">
+                          Selections are recorded for estimating and export. Existing frame LF × rate pricing is
+                          unchanged until lengths for individual channel locations are measured.
+                        </p>
+                      </div>
                     ) : (
-                      /* Curtain Walls / Office Fit-Out: unnumbered choices, plus Other. */
+                      /* Curtain Walls: unnumbered choices, plus Other. */
                       <div className="field">
                         <label
                           className="field-label"
@@ -5166,7 +5608,7 @@ export default function Home() {
                         id="project-frame-finish"
                         className="input"
                         value={
-                          isStandardFrameFinish(project.finish)
+                          finishOptionsFor(workspace).includes(project.finish)
                             ? project.finish
                             : project.finish.trim() !== ''
                               ? CUSTOM_FRAME_FINISH
@@ -5179,7 +5621,7 @@ export default function Home() {
                         <option value="">
                           — Select Frame Finish —
                         </option>
-                        {FRAME_FINISH_OPTIONS.map(name => (
+                        {finishOptionsFor(workspace).map(name => (
                           <option key={name} value={name}>
                             {name}
                           </option>
@@ -5187,7 +5629,7 @@ export default function Home() {
                       </select>
 
                       {project.finish.trim() !== '' &&
-                      (!isStandardFrameFinish(project.finish) ||
+                      (!finishOptionsFor(workspace).includes(project.finish) ||
                         project.finish === CUSTOM_FRAME_FINISH) ? (
                         <div style={{ marginTop: 10 }}>
                           <label className="field-label" htmlFor="custom-project-frame-finish">
@@ -5462,6 +5904,7 @@ export default function Home() {
                                   setOpening(o.id, {
                                     storefrontType: selected,
                                     openingType: storefrontLegacyType(selected),
+                                    doorRateOverride: null,
                                   });
                                 }}
                               >
@@ -5471,6 +5914,29 @@ export default function Home() {
                                       <option key={type} value={type}>
                                         {type}
                                       </option>
+                                    ))}
+                                  </optgroup>
+                                ))}
+                              </select>
+                            ) : workspace === 'office-fit-out' ? (
+                              <select
+                                className="input"
+                                aria-label="Office Fit-Out Type"
+                                value={o.officeFitOutType || legacyOfficeFitOutType(o.openingType)}
+                                onChange={e => {
+                                  const type = e.target.value;
+                                  setOpening(o.id, {
+                                    officeFitOutType: type,
+                                    // Preserve existing fixed/single/double door
+                                    // package logic for calculated hardware pricing.
+                                    openingType: officeFitOutLegacyType(type),
+                                  });
+                                }}
+                              >
+                                {OFFICE_FIT_OUT_TYPE_GROUPS.map(group => (
+                                  <optgroup key={group.label} label={group.label}>
+                                    {group.options.map(type => (
+                                      <option key={type} value={type}>{type}</option>
                                     ))}
                                   </optgroup>
                                 ))}
@@ -5802,9 +6268,32 @@ export default function Home() {
 
                           {usesShopGlassCut(workspace, o.glassMode) && (
                             <div style={{ gridColumn: '1 / -1', padding: '8px 11px', borderRadius: 8, background: '#F0F7FD', color: '#2D5879', fontSize: 11, lineHeight: 1.5 }}>
-                              <strong>Calculated glass cut:</strong>{' '}
-                              deduct 2&quot; per side of each lite (4&quot; from width and height).
-                              {' '}For storefront, window, and door glass. Verify fabrication sizes.
+                              {workspace === 'curtain-walls' ? (
+                                <>
+                                  <strong>Calculated curtain wall glass cut:</strong>{' '}
+                                  normally deduct 0.5&quot; per side of each lite
+                                  (1&quot; total from width and height).
+                                  {' '}Adjust the allowance for this unit if required by the project.
+                                  <div style={{ maxWidth: 280, marginTop: 9 }}>
+                                    <Field label="Curtain Wall glass deduction / side (in)">
+                                      <Num
+                                        value={o.curtainWallEdgeDeductionIn}
+                                        step={0.125}
+                                        onChange={v => setOpening(o.id, {
+                                          curtainWallEdgeDeductionIn: v,
+                                        })}
+                                      />
+                                    </Field>
+                                  </div>
+                                </>
+                              ) : (
+                                <>
+                                  <strong>Calculated glass cut:</strong>{' '}
+                                  deduct 2&quot; per side of each lite (4&quot; from width and height).
+                                  {' '}For storefront, window, and door glass.
+                                </>
+                              )}
+                              {' '}Estimating only; verify fabrication sizes.
                             </div>
                           )}
 
@@ -5815,6 +6304,12 @@ export default function Home() {
                               o.hardwareMode === 'calculated'
                                 ? 'hardware-pricing-row--calculated'
                                 : 'hardware-pricing-row--manual'
+                            }${
+                              o.hardwareMode === 'calculated' &&
+                              workspace === 'storefront' &&
+                              storefrontDoorPackageKind(o.storefrontType, o.openingType) !== null
+                                ? ' hardware-pricing-row--with-door'
+                                : ''
                             }`}
                           >
                             <Field label="Hardware pricing method">
@@ -5855,8 +6350,9 @@ export default function Home() {
                                   label="Framing Rate $/LF"
                                   unit="LF"
                                   selected={
-                                    project.framingSystem ||
-                                    'Framing system not selected'
+                                    workspace === 'office-fit-out'
+                                      ? 'General Office Fit-Out framing rate; channel choices are documented separately'
+                                      : (project.framingSystem || 'Framing system not selected')
                                   }
                                   defaultRate={catalogFramingRate(p, project.framingSystem)}
                                   override={o.frameRateOverride}
@@ -5877,6 +6373,32 @@ export default function Home() {
                                     }
                                   />
                                 </Field>
+
+                                {/* Storefront: a door-containing type uses the
+                                    project Door Model / Type selected ABOVE.
+                                    Only the editable package PRICE is repeated here. */}
+                                {workspace === 'storefront' &&
+                                  storefrontDoorPackageKind(o.storefrontType, o.openingType) !== null && (
+                                    <div className="hardware-door-rate-field">
+                                      <RateInput
+                                        label="Door Model Package $ / assembly"
+                                        unit="assembly"
+                                        selected={
+                                          `Project door model: ${project.storefrontDoorModel || 'Not selected'}` +
+                                          (storefrontDoorPackageKind(o.storefrontType, o.openingType) === 'specialty'
+                                            ? ' · Specialty — enter a quoted package price'
+                                            : ' · Uses Door Model / Type chosen above')
+                                        }
+                                        defaultRate={catalogDoorPackageRate(
+                                          p, 'storefront',
+                                          project.storefrontDoorModel,
+                                          o.openingType, o.storefrontType
+                                        )}
+                                        override={o.doorRateOverride}
+                                        onChange={v => setOpening(o.id, { doorRateOverride: v })}
+                                      />
+                                    </div>
+                                  )}
                               </>
                             )}
                           </div>
@@ -7096,9 +7618,9 @@ export default function Home() {
                       </div>
                     </div>
                     <p className="panel-subtitle">
-                      Set different prices for each framing system in the {WORKSPACE_NAMES[workspace]}
-                      {' '}directory. Storefront also has model-specific single- and double-door
-                      packages. Your existing default rates are used until you set a model rate.
+                      {workspace === 'office-fit-out'
+                        ? 'Store reference $/LF rates for the listed office channels. Channel selections are recorded with each estimate; the frame costing method still uses the existing general LF rate until separate installed lengths are provided.'
+                        : <>Set different prices for each framing system in the {WORKSPACE_NAMES[workspace]} directory. Storefront also has model-specific single- and double-door packages. Your existing default rates are used until you set a model rate.</>}
                     </p>
 
                     <h3 className="rate-catalog-heading">General defaults — {WORKSPACE_NAMES[workspace]}</h3>
@@ -7115,12 +7637,14 @@ export default function Home() {
                     </div>
 
                     <h3 className="rate-catalog-heading" style={{ marginTop: 26 }}>
-                      {WORKSPACE_NAMES[workspace]} framing systems ($/LF)
+                      {workspace === 'office-fit-out'
+                        ? 'Office Fit-Out channels (catalog $/LF)'
+                        : `${WORKSPACE_NAMES[workspace]} framing systems ($/LF)`}
                     </h3>
                     <p className="rate-catalog-note">
-                      Each row matches this workspace's framing dropdown. Choose a system in
-                      Project Information to apply its rate automatically when hardware pricing
-                      is calculated. A custom-named framing system also appears here.
+                      {workspace === 'office-fit-out'
+                        ? 'Office Fit-Out lists available channel products. Select channels in Project Information. Project-wide channel selections are saved and exported; because channel-specific LF is not entered yet, calculated framing costs continue using the existing framing LF rate.'
+                        : 'Each row matches this workspace’s framing dropdown. Choose a system in Project Information to apply its rate automatically when hardware pricing is calculated. A custom-named framing system also appears here.'}
                     </p>
                     <div className="model-rate-directory">
                       {rateFramingModels(workspace, project.framingSystem).map(name => {
@@ -7130,7 +7654,7 @@ export default function Home() {
                           <div className="model-rate-row" key={`frame-${name}`}>
                             <div className="model-rate-name">
                               <strong>{name}</strong>
-                              {project.framingSystem === name && (
+                              {(workspace === 'office-fit-out' ? OFFICE_CHANNEL_KEYS.some(key => project.officeFitOutChannels[key] === name) : project.framingSystem === name) && (
                                 <span className="model-rate-active">Selected system</span>
                               )}
                               <small>{custom ? 'Custom catalog rate' : 'Using fallback framing rate'}</small>
@@ -7159,8 +7683,9 @@ export default function Home() {
                         <p className="rate-catalog-note">
                           Each door model has its own single-door and double-door rate.
                           Select a Door Model / Type in the Storefront project and use a
-                          single- or double-door opening to apply its matching package.
-                          Manual hardware prices are never changed.
+                          door-containing unit (including door + sidelite/transom) to apply
+                          its matching single- or double-door package. Specialty doors
+                          need an explicit per-unit price. Manual hardware remains unchanged.
                         </p>
                         <div className="model-rate-directory">
                           {[
@@ -7770,7 +8295,7 @@ export default function Home() {
 
           <footer className="footer">
             <span>
-              Aspect Glasswork · V1.7.26
+              Aspect Glasswork · V1.7.32
             </span>
 
             <span>
