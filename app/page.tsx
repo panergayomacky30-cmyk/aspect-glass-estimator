@@ -21,7 +21,7 @@ import type {
   StorefrontOpening,
 } from '../lib/types';
 
-// ASPECT GLASSWORK ESTIMATING STUDIO V1.7.32
+// ASPECT GLASSWORK ESTIMATING STUDIO V1.7.34
 // Blue and white theme, 13 Storefront glass specs, 8 Windows glass specs,
 // 20 Windows-only window types; unnumbered framing and door dropdowns.
 // Storefront framing AND door models now have an Other choice with a custom
@@ -31,6 +31,11 @@ import type {
 // New estimates in all workspaces prompt for Frame Finish; saved finishes are kept.
 // All workspaces support custom frame finishes; calculations are unchanged.
 // Existing estimating formulas, saved projects and model dropdowns are retained.
+// V1.7.34: Added persistent Day / Night display modes. Day Mode preserves
+// the existing blue-and-white appearance; Night Mode uses charcoal and
+// slate gray. Theme affects display only, never saved estimate values,
+// manufacturer rates, glass sizing or spreadsheet computations.
+// V1.7.33: Replaced the A. header mark with Aspect Glasswork logo image.
 // V1.7.32: Office Fit-Out Type dropdown expanded to the 32 choices in four
 // groups from the supplied list (partitions, doors/combinations, specialty,
 // other glasswork). Preserves legacy fixed/single/double door pricing types.
@@ -3652,6 +3657,12 @@ export default function Home() {
   const [notice, setNotice] =
     useState('');
 
+  // Appearance preference is isolated from estimate data and pricing.
+  // Default to the original blue-and-white interface (Day Mode).
+  const [themeMode, setThemeMode] = useState<'day' | 'night'>('day');
+  const [themePreferenceReady, setThemePreferenceReady] = useState(false);
+
+
   const [googleSdkReady, setGoogleSdkReady] = useState(false);
   const [googleExporting, setGoogleExporting] = useState(false);
   const [createdGoogleSheetUrl, setCreatedGoogleSheetUrl] = useState('');
@@ -3726,6 +3737,29 @@ export default function Home() {
           a.updatedAt
         )
     );
+
+  // Restore the last manually selected appearance without touching the
+  // workspace drafts, saved estimates or any rates.
+  useEffect(() => {
+    try {
+      const stored = window.localStorage.getItem('aspect-glasswork.theme');
+      if (stored === 'day' || stored === 'night') {
+        setThemeMode(stored);
+      }
+    } catch {
+      // Theme remains usable even if local storage is unavailable.
+    }
+    setThemePreferenceReady(true);
+  }, []);
+
+  useEffect(() => {
+    if (!themePreferenceReady) return;
+    try {
+      window.localStorage.setItem('aspect-glasswork.theme', themeMode);
+    } catch {
+      // Browsers that block storage can still switch themes per session.
+    }
+  }, [themeMode, themePreferenceReady]);
 
   // Load Google Identity Services once; no account information is requested
   // until the user clicks Export to Google Sheets.
@@ -4917,7 +4951,7 @@ export default function Home() {
   // ==================================================
 
   return (
-    <div className="app-root">
+    <div className={`app-root ${themeMode === 'night' ? 'theme-dark' : 'theme-light'}`}>
 
       {/* HEADER */}
 
@@ -4936,9 +4970,32 @@ export default function Home() {
         </div>
 
         <div className="topbar-right">
+          <div className="theme-switch" role="group" aria-label="Appearance mode">
+            <button
+              type="button"
+              className={`theme-switch-option ${themeMode === 'day' ? 'is-active' : ''}`}
+              onClick={() => setThemeMode('day')}
+              aria-pressed={themeMode === 'day'}
+              title="Use original Day Mode"
+            >
+              <span aria-hidden="true" className="theme-switch-symbol">☀</span>
+              <span className="theme-switch-text">Day</span>
+            </button>
+            <button
+              type="button"
+              className={`theme-switch-option ${themeMode === 'night' ? 'is-active' : ''}`}
+              onClick={() => setThemeMode('night')}
+              aria-pressed={themeMode === 'night'}
+              title="Use charcoal Night Mode"
+            >
+              <span aria-hidden="true" className="theme-switch-symbol">☾</span>
+              <span className="theme-switch-text">Night</span>
+            </button>
+          </div>
+
           <span className="top-pill">
             <span className="green-dot" />
-            Browser-based · V1.7.32
+            Browser-based · V1.7.34
           </span>
 
           <span className="autosave">
@@ -5043,7 +5100,7 @@ export default function Home() {
 
           <div className="sidebar-help">
             <strong>
-              Estimator V1.7.32
+              Estimator V1.7.34
             </strong>
 
             <p>
@@ -6267,7 +6324,7 @@ export default function Home() {
                           </div>
 
                           {usesShopGlassCut(workspace, o.glassMode) && (
-                            <div style={{ gridColumn: '1 / -1', padding: '8px 11px', borderRadius: 8, background: '#F0F7FD', color: '#2D5879', fontSize: 11, lineHeight: 1.5 }}>
+                            <div className="glass-cut-note" style={{ gridColumn: '1 / -1', padding: '8px 11px', borderRadius: 8, background: '#F0F7FD', color: '#2D5879', fontSize: 11, lineHeight: 1.5 }}>
                               {workspace === 'curtain-walls' ? (
                                 <>
                                   <strong>Calculated curtain wall glass cut:</strong>{' '}
@@ -6754,6 +6811,7 @@ export default function Home() {
                       {/* GROSS PROFIT */}
 
                       <div
+                        className="summary-margin-editor"
                         style={{
                           margin: '12px',
                           padding: 12,
@@ -7073,6 +7131,7 @@ export default function Home() {
                         type="button"
                         onClick={() => openPricingDirectory(name)}
                         aria-pressed={isSelected}
+                        className="pricing-directory-card"
                         style={{
                           textAlign: 'left',
                           cursor: 'pointer',
@@ -7393,6 +7452,7 @@ export default function Home() {
                       return (
                         <div
                           key={group.name}
+                          className="glass-rate-group"
                           style={{
                             border:
                               '1px solid #DAE6F1',
@@ -8124,6 +8184,7 @@ export default function Home() {
                     return (
                       <article
                         key={item.id}
+                        className="saved-estimate-card"
                         style={{
                           border:
                             '1px solid #d9e5e6',
@@ -8295,7 +8356,7 @@ export default function Home() {
 
           <footer className="footer">
             <span>
-              Aspect Glasswork · V1.7.32
+              Aspect Glasswork · V1.7.34
             </span>
 
             <span>

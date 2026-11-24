@@ -452,3 +452,202 @@ details[style] strong[style*="color"] { color: #1766a4 !important; }
   .office-fit-out-channel-grid { grid-template-columns: minmax(0, 1fr); }
   .office-fit-out-channel-panel { padding: 13px; }
 }
+
+
+/* ==============================================================
+   V1.7.34 — NIGHT MODE (charcoal / slate, NO cyan or pale blue)
+   The original Day Mode rules above are unchanged. Do not theme
+   globally: everything below is scoped under .app-root.theme-dark.
+   ============================================================== */
+
+/* A compact segmented toggle in the existing header */
+.theme-switch {
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+  gap: 2px;
+  padding: 3px;
+  border: 1px solid #ccdce9;
+  border-radius: 999px;
+  background: #edf3f8;
+}
+.theme-switch-option {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  justify-content: center;
+  min-width: 52px;
+  padding: 6px 9px;
+  border: none;
+  border-radius: 999px;
+  color: #58738c;
+  background: transparent;
+  cursor: pointer;
+  font-size: 11px;
+  font-weight: 750;
+  line-height: 1;
+  transition: background-color .2s, color .2s, box-shadow .2s;
+}
+.theme-switch-option.is-active { background: #1766a4; color: #fff; box-shadow: 0 1px 4px #113e6129; }
+.theme-switch-symbol { font-size: 16px; font-weight: 500; }
+.theme-switch-option:focus-visible { outline: 2px solid #82abd0; outline-offset: 2px; }
+
+.app-root.theme-dark {
+  --ink: #e6e9ee;
+  --muted: #a9b3c1;
+  --line: #353c46;
+  --surface: #1b2027;
+  --page: #11151a;
+  --accent: #91a8be;
+  --accent-light: #29323c;
+  --navy: #151a20;
+  --aspect-deep: #e8edf3;
+  --aspect-sky: #a6b4c7;
+  --aspect-faint: #252c35;
+  --aspect-faintest: #191f26;
+  --aspect-border: #394451;
+  color-scheme: dark;
+  background: var(--page);
+  color: var(--ink);
+  min-height: 100vh;
+}
+.theme-dark :is(.topbar,.sidebar) { background: #171c22; border-color: #313942; box-shadow: none; }
+.theme-dark .brand-logo-img { filter: invert(1); }
+.theme-dark .brand-names strong { color: #f2f4f7; }
+.theme-dark .brand-names small { color: #acb8c5; }
+.theme-dark .top-pill { background: #252d37; border-color: #3b4753; color: #c6d0dc; }
+.theme-dark .green-dot { background: #9caebf; }
+.theme-dark .autosave { color: #a7b3c0; }
+.theme-dark .theme-switch { background: #242b34; border-color: #4a5460; }
+.theme-dark .theme-switch-option { color: #afbdca; }
+.theme-dark .theme-switch-option.is-active { color: #f7fafc; background: #505f70; box-shadow: none; }
+.theme-dark .sidebar-label { color: #9daab7; }
+.theme-dark .sidebar-help { background: #222932; border: 1px solid #38434e; }
+.theme-dark .sidebar-help strong { color: #dbe3ed; }
+.theme-dark .sidebar-help p, .theme-dark .sidebar-link { color: #aeb8c4; }
+.theme-dark .navitem { color: #b5bfcb; }
+.theme-dark .navitem:hover { background: #282f38; color: #e5ebf1; }
+.theme-dark .navitem.active { background: #374452; color: #f5f7fa; box-shadow: inset 3px 0 0 #98aabc; }
+.theme-dark .nav-mobile { background: #1c232b; border-color: #3b4754; }
+.theme-dark .nav-mobile button { color: #b1becb; }
+.theme-dark .nav-mobile button.selected { background: #384656; color: #f5f7fa; }
+.theme-dark .main { background: transparent; }
+.theme-dark :is(.page-toolbar h1,.panel h2,.summary-header h2,.rate-catalog-heading) { color: #edf1f6; }
+.theme-dark .page-desc, .theme-dark .panel-subtitle { color: #aeb9c6; }
+.theme-dark :is(.eyebrow,.section-label) { color: #a8bbd0; }
+.theme-dark :is(.panel,.opening-card,.model-rate-directory,.saved-estimate-card,.glass-rate-group) {
+  background: #1b2027 !important;
+  border-color: #37414c !important;
+  color: #e6eaf0 !important;
+  box-shadow: 0 4px 18px #0000001a;
+}
+.theme-dark .opening-heading { background: #242c36; border-color: #35404d; }
+.theme-dark .opening-index { color: #d8e2ed; background: #364351; border-color: #536072; }
+.theme-dark .opening-category, .theme-dark .field-hint { color: #acb9c8; }
+.theme-dark .opening-result { background: #222933; border-color: #374250; }
+.theme-dark .opening-result span, .theme-dark .stat-title { color: #adb9c7; }
+.theme-dark .opening-result strong, .theme-dark .opening-result > div:last-child strong,
+.theme-dark .stat-value { color: #f0f4f7; }
+.theme-dark .tag, .theme-dark .model-rate-active { background: #344251; border-color: #455467; color: #d8e6f5; }
+.theme-dark .tag-orange { background: #4a382b; color: #f2c69e; }
+.theme-dark .field-label { color: #d1dbe6; }
+.theme-dark :is(.input,.textarea) {
+  background: #272e38 !important;
+  border-color: #4b5766 !important;
+  color: #f2f4f7 !important;
+  box-shadow: none;
+}
+.theme-dark :is(.input,.textarea):hover { border-color: #7d8b9b !important; }
+.theme-dark :is(.input,.textarea):focus { border-color: #a1b3c6 !important; box-shadow: 0 0 0 3px #91a6ba33; }
+.theme-dark :is(.input,.textarea)::placeholder { color: #a7b1bd; }
+.theme-dark :is(.input,.textarea):disabled { background: #20262e !important; color: #8897a6 !important; }
+.theme-dark .btn-quiet, .theme-dark .btn-outline,
+.theme-dark .add-bottom { background: #252e38; color: #dce4ec; border-color: #4b5c6e; }
+.theme-dark :is(.btn-quiet,.btn-outline,.add-bottom):hover { background: #354252; color: #fff; }
+.theme-dark .btn-dark, .theme-dark .summary-button { background: #4e6479; color: #fff; }
+.theme-dark :is(.btn-dark,.summary-button):hover { background: #657d91; }
+.theme-dark .remove-btn { background: #303843; color: #c1cbd6; }
+.theme-dark .remove-btn:hover { background: #543337; color: #ffdad8; }
+.theme-dark .rate-catalog-note, .theme-dark .model-rate-name small,
+.theme-dark .model-rate-cell > span { color: #b4c0cd; }
+.theme-dark .model-rate-name strong { color: #ebeff4; }
+.theme-dark .model-rate-row { border-color: #343d47; }
+.theme-dark .model-rate-row:nth-child(2n) { background: #222932; }
+.theme-dark .model-rate-row:nth-child(2n + 1) { background: #1b2027; }
+.theme-dark .office-fit-out-channel-panel,
+.theme-dark .office-fit-out-channel-panel--unit { background: #222a34; border-color: #46515e; }
+.theme-dark .office-fit-out-channel-heading strong { color: #e8edf3; }
+.theme-dark .office-fit-out-channel-heading span { color: #b6c1ce; }
+.theme-dark .formula-panel { background: #262d37; }
+.theme-dark .formula-panel strong { color: #e8edf3; }
+.theme-dark .formula-panel p { color: #b7c3d0; }
+.theme-dark .formula-panel code { color: #d0dbe7; }
+.theme-dark .stat { border-color: #39434e; }
+.theme-dark .stat-hero .stat-value { color: #ebf2fa; }
+.theme-dark .summary-card { background: linear-gradient(160deg,#1a2028,#252d37); border: 1px solid #3d4854; color: #eff2f7; box-shadow: 0 8px 24px #00000026; }
+.theme-dark .summary-hero, .theme-dark .summary-stats { border-color: #414b57; }
+.theme-dark .summary-card :is(.light-label,.summary-hero > span,.summary-hero small,.summary-stats span,.summary-breakdown span) { color: #b4c0cd; }
+.theme-dark .summary-breakdown .summary-total, .theme-dark .summary-breakdown .summary-profit { border-color: #414b57; }
+.theme-dark .summary-breakdown .summary-profit strong { color: #dce5f0; }
+.theme-dark .summary-secondary, .theme-dark .summary-disclaimer { color: #c0cbd7; }
+.theme-dark .summary-margin-editor { background: #2b3541 !important; color: #ecf1f7 !important; }
+.theme-dark .summary-margin-editor .field-label { color: #d6e0ea; }
+.theme-dark .google-sheets-export { border-color: #485869; background: #303b48; }
+.theme-dark .google-sheets-export-title, .theme-dark .google-sheets-export-explanation,
+.theme-dark .google-sheets-export-steps { color: #d6e1ec; }
+.theme-dark .google-sheets-export-download { border-color: #778da2; background: #34485c; color: #f2f6fa; }
+.theme-dark .google-sheets-export-drive { color: #e4ecf4; border-color: #718395; }
+.theme-dark details[style] { background: #242b35 !important; border-color: #485563 !important; color: #e4eaf1 !important; }
+.theme-dark details[style] summary, .theme-dark details[style] strong[style*="color"] { color: #e5edf6 !important; }
+.theme-dark .glass-cut-note { background: #293441 !important; color: #d7e3ed !important; }
+.theme-dark .toast { color: #e8f0f7; background: #2f4151; }
+.theme-dark .toast button { color: #edf4fa; }
+.theme-dark .sample-notice { background: #3d3225; border-color: #665036; color: #f5d4a7; }
+.theme-dark .validation { background: #482b31; border-color: #824b50; color: #ffe1db; }
+.theme-dark .pricing-directory-card { background: #232b35 !important; border-color: #435265 !important; color: #f0f4f8 !important; }
+.theme-dark .pricing-directory-card[aria-pressed="true"] { background: #364453 !important; border-color: #91a8bf !important; }
+.theme-dark .pricing-directory-card > span { color: #c4d0db !important; }
+.theme-dark .pricing-directory-card > strong { color: #f0f4f8 !important; }
+.theme-dark .glass-rate-group > button { background: #29323d !important; color: #f1f5f9 !important; }
+.theme-dark .glass-rate-group span[style], .theme-dark .glass-rate-group div[style] { color: #ced9e5 !important; }
+.theme-dark .glass-rate-group div[style] { border-color: #3b4855 !important; }
+.theme-dark .saved-estimate-card [style*="color"] { color: #bfcbd8 !important; }
+.theme-dark .saved-estimate-card strong { color: #f0f3f6 !important; }
+.theme-dark .saved-estimate-card .stat-value { color: #fff !important; }
+.theme-dark .panel button[aria-pressed="true"][style],
+.theme-dark .sidebar button[aria-pressed="true"][style] { background: #344454 !important; border-color: #8295a8 !important; color: #f0f5fa !important; }
+.theme-dark .panel button[aria-pressed="true"][style] > span { color: #d7e6f4 !important; }
+.theme-dark .panel button[aria-pressed="false"][style]:hover,
+.theme-dark .sidebar button[aria-pressed="false"][style]:hover { background: #2d3742 !important; color: #f3f6fa !important; }
+.theme-dark .quote-paper { background: #20262e; border-color: #3e4855; color: #edf1f6; }
+.theme-dark .quote-top p, .theme-dark .quote-meta p, .theme-dark .quote-table td,
+.theme-dark .quote-details p, .theme-dark .quote-terms p { color: #c6d1dc; }
+.theme-dark .quote-table th { background: #2c3540; color: #d4deea; }
+.theme-dark .quote-table td { border-color: #3a4653; }
+.theme-dark .quote-document, .theme-dark .quote-top h2 { color: #edf2f8; }
+.theme-dark .quote-price { background: #324252; }
+.theme-dark .quote-price span, .theme-dark .quote-price strong, .theme-dark .quote-price small { color: #e1ebf6; }
+.theme-dark .quote-footer { border-color: #46515c; color: #adb8c6; }
+.theme-dark .footer { color: #aeb8c4; }
+/* Dark menus drawn with inline colors use a nested surface rather than white. */
+.theme-dark .opening-card [style*="z-index: 30"] { background: #242c35 !important; border-color: #536170 !important; }
+.theme-dark .opening-card [style*="z-index: 30"] button { background: transparent !important; color: #edf3f8 !important; }
+.theme-dark .opening-card [style*="z-index: 30"] button:hover { background: #354453 !important; }
+
+/* Protect the legibility of printed quotations independently of screen mode. */
+@media print {
+  .theme-switch { display: none !important; }
+  .theme-dark .quote-paper { background: #fff !important; color: #18293d !important; }
+  .theme-dark .quote-paper :is(h2,h3,strong,span,p,small,td,th) { color: #18293d !important; }
+  .theme-dark .quote-table th { background: #f3f6f8 !important; }
+  .theme-dark .quote-price { background: #eef7f3 !important; }
+}
+@media (max-width: 760px) {
+  .topbar-right { gap: 9px; }
+  .theme-switch-text { display: none; }
+  .theme-switch-option { min-width: 30px; padding: 5px 6px; }
+}
+@media (max-width: 440px) {
+  .theme-switch { padding: 2px; }
+  .theme-switch-option { min-width: 27px; }
+}
